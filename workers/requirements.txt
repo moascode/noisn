@@ -1,0 +1,5 @@
+pyzeebe==4.4.0
+boto3==1.35.0
+botocore==1.35.0
+requests==2.32.3
+python-dotenv==1.0.1

@@ -1,0 +1,369 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+                  xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+                  xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+                  xmlns:modeler="http://camunda.org/schema/modeler/1.0"
+                  id="Definitions_1"
+                  targetNamespace="http://bpmn.io/schema/bpmn"
+                  modeler:executionPlatform="Camunda Cloud"
+                  modeler:executionPlatformVersion="8.8.0">
+
+  <bpmn:process id="pension-configurator" name="Pension Configurator" isExecutable="true">
+
+    <!-- ═══════════════════════════════════════════════════
+         START EVENT
+    ═══════════════════════════════════════════════════ -->
+    <bpmn:startEvent id="StartEvent_1" name="User opens configurator">
+      <bpmn:outgoing>Flow_to_init</bpmn:outgoing>
+    </bpmn:startEvent>
+
+    <!-- ═══════════════════════════════════════════════════
+         INIT: Create session context
+    ═══════════════════════════════════════════════════ -->
+    <bpmn:serviceTask id="Task_InitSession" name="Initialise session context">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="init-session" retries="3" />
+        <zeebe:ioMapping>
+          <zeebe:output source="=productCode" target="productCode" />
+          <zeebe:output source="=consentGiven" target="consentGiven" />
+          <zeebe:output source="=sessionStartedAt" target="sessionStartedAt" />
+          <zeebe:output source="=sufficiencyScore" target="sufficiencyScore" />
+          <zeebe:output source="=simulationRunCount" target="simulationRunCount" />
+          <zeebe:output source="=eligibilityFlags" target="eligibilityFlags" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_to_init</bpmn:incoming>
+      <bpmn:outgoing>Flow_to_build_intake_prompt</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <!-- ═══════════════════════════════════════════════════
+         SCRIPT: Build intake system prompt
+    ═══════════════════════════════════════════════════ -->
+    <bpmn:scriptTask id="Task_BuildIntakePrompt" name="Build intake system prompt" scriptFormat="feel">
+      <bpmn:extensionElements>
+        <zeebe:script expression='= {
+          "systemPromptIntake": "You are a friendly pension advisor assistant for Danica Pension, Denmark. Your goal is to collect all information needed to run a pension simulation. Product: " + productCode + ". Collect: age, annualSalary, employmentStatus, desiredRetirementAge, hasPartner, hasDependants, housingType, otherSavingsDKK. Use assess_sufficiency after each answer. When score >= 80, call signal_complete.",
+          "userPromptIntake": "Begin the intake conversation. Current collected data: " + string({"age": age, "annualSalary": annualSalary, "employmentStatus": employmentStatus}),
+          "incomingUserMessage": ""
+        }' resultVariable="intakeContext" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_to_build_intake_prompt</bpmn:incoming>
+      <bpmn:outgoing>Flow_to_intake_subprocess</bpmn:outgoing>
+    </bpmn:scriptTask>
+
+    <!-- ═══════════════════════════════════════════════════
+         AI AGENT SUB-PROCESS: INTAKE
+         Ad-hoc sub-process with job-worker implementation
+    ═══════════════════════════════════════════════════ -->
+    <bpmn:adHocSubProcess id="SubProcess_Intake" name="AI Agent: Intake Conversation"
+                          ordering="Parallel" cancelRemainingInstances="false">
+      <bpmn:extensionElements>
+        <!-- AI Agent Sub-process connector template -->
+        <zeebe:taskDefinition type="io.camunda:aws-bedrock-agent:1" />
+        <zeebe:taskHeaders>
+          <zeebe:header key="provider" value="BEDROCK" />
+          <zeebe:header key="region" value="eu-west-1" />
+          <zeebe:header key="modelId" value="anthropic.claude-3-5-sonnet-20241022-v2:0" />
+          <zeebe:header key="authType" value="IAM_ROLE" />
+          <zeebe:header key="memoryEnabled" value="true" />
+          <zeebe:header key="memoryStorage" value="DOCUMENT" />
+          <zeebe:header key="toolResolution" value="AUTO" />
+          <zeebe:header key="completionCondition" value="NO_TOOL_CALL" />
+          <zeebe:header key="systemPrompt" value="=intakeContext.systemPromptIntake" />
+          <zeebe:header key="userPrompt" value="=intakeContext.userPromptIntake" />
+        </zeebe:taskHeaders>
+        <zeebe:ioMapping>
+          <zeebe:output source="=sufficiencyScore" target="sufficiencyScore" />
+          <zeebe:output source="=eligibilityFlags" target="eligibilityFlags" />
+          <zeebe:output source="=age" target="age" />
+          <zeebe:output source="=annualSalary" target="annualSalary" />
+          <zeebe:output source="=employmentStatus" target="employmentStatus" />
+          <zeebe:output source="=desiredRetirementAge" target="desiredRetirementAge" />
+          <zeebe:output source="=hasPartner" target="hasPartner" />
+          <zeebe:output source="=hasDependants" target="hasDependants" />
+          <zeebe:output source="=housingType" target="housingType" />
+          <zeebe:output source="=otherSavingsDKK" target="otherSavingsDKK" />
+          <zeebe:output source="=homeEquityDKK" target="homeEquityDKK" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_to_intake_subprocess</bpmn:incoming>
+      <bpmn:outgoing>Flow_to_sufficiency_gw</bpmn:outgoing>
+
+      <!-- Tools inside ad-hoc sub-process -->
+      <bpmn:serviceTask id="Tool_AskQuestion" name="ask_question">
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="tool-ask-question" />
+        </bpmn:extensionElements>
+      </bpmn:serviceTask>
+      <bpmn:serviceTask id="Tool_StoreAnswer" name="store_answer">
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="tool-store-answer" />
+        </bpmn:extensionElements>
+      </bpmn:serviceTask>
+      <bpmn:serviceTask id="Tool_CheckEligibility" name="check_eligibility">
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="tool-check-eligibility" />
+        </bpmn:extensionElements>
+      </bpmn:serviceTask>
+      <bpmn:serviceTask id="Tool_AssessSufficiency" name="assess_sufficiency">
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="tool-assess-sufficiency" />
+        </bpmn:extensionElements>
+      </bpmn:serviceTask>
+      <bpmn:serviceTask id="Tool_SignalComplete_Intake" name="signal_complete">
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="tool-signal-complete" />
+        </bpmn:extensionElements>
+      </bpmn:serviceTask>
+
+      <!-- Timer boundary — max session inactivity -->
+      <bpmn:boundaryEvent id="BoundaryEvent_IntakeTimeout" attachedToRef="SubProcess_Intake" cancelActivity="true">
+        <bpmn:timerEventDefinition>
+          <bpmn:timeDuration>PT30M</bpmn:timeDuration>
+        </bpmn:timerEventDefinition>
+        <bpmn:outgoing>Flow_timeout_to_park</bpmn:outgoing>
+      </bpmn:boundaryEvent>
+
+      <!-- Error boundary -->
+      <bpmn:boundaryEvent id="BoundaryEvent_IntakeError" attachedToRef="SubProcess_Intake" cancelActivity="true">
+        <bpmn:errorEventDefinition errorRef="Error_AgentFailure" />
+        <bpmn:outgoing>Flow_error_to_fallback</bpmn:outgoing>
+      </bpmn:boundaryEvent>
+    </bpmn:adHocSubProcess>
+
+    <!-- ═══════════════════════════════════════════════════
+         GATEWAY: Sufficiency check
+    ═══════════════════════════════════════════════════ -->
+    <bpmn:exclusiveGateway id="GW_Sufficiency" name="Sufficient info?">
+      <bpmn:incoming>Flow_to_sufficiency_gw</bpmn:incoming>
+      <bpmn:outgoing>Flow_sufficient</bpmn:outgoing>
+      <bpmn:outgoing>Flow_not_sufficient</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+
+    <!-- Loop back if not sufficient (max 3 times via variable) -->
+    <bpmn:sequenceFlow id="Flow_sufficient" sourceRef="GW_Sufficiency" targetRef="SubProcess_Simulation">
+      <bpmn:conditionExpression>=sufficiencyScore >= 80</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_not_sufficient" sourceRef="GW_Sufficiency" targetRef="Task_BuildIntakePrompt">
+      <bpmn:conditionExpression>=sufficiencyScore &lt; 80</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+
+    <!-- ═══════════════════════════════════════════════════
+         SIMULATION SUB-PROCESS (reusable)
+    ═══════════════════════════════════════════════════ -->
+    <bpmn:callActivity id="SubProcess_Simulation" name="Run Simulation">
+      <bpmn:extensionElements>
+        <zeebe:calledElement processId="pension-simulation" propagateAllChildVariables="true" />
+        <zeebe:ioMapping>
+          <zeebe:input source="=age" target="age" />
+          <zeebe:input source="=annualSalary" target="annualSalary" />
+          <zeebe:input source="=desiredRetirementAge" target="desiredRetirementAge" />
+          <zeebe:input source="=monthlyContribution" target="monthlyContribution" />
+          <zeebe:input source="=riskProfile" target="riskProfile" />
+          <zeebe:input source="=payoutType" target="payoutType" />
+          <zeebe:input source="=criticalIllnessTier" target="criticalIllnessTier" />
+          <zeebe:input source="=lifeInsuranceEnabled" target="lifeInsuranceEnabled" />
+          <zeebe:input source="=healthInsuranceModules" target="healthInsuranceModules" />
+          <zeebe:input source="=earningCapacityCoverEndAge" target="earningCapacityCoverEndAge" />
+          <zeebe:output source="=projectedPensionMonthlyDKK" target="projectedPensionMonthlyDKK" />
+          <zeebe:output source="=projectedPensionAnnualDKK" target="projectedPensionAnnualDKK" />
+          <zeebe:output source="=salaryReplacementPct" target="salaryReplacementPct" />
+          <zeebe:output source="=totalMonthlyPremiumDKK" target="totalMonthlyPremiumDKK" />
+          <zeebe:output source="=coverageBreakdown" target="coverageBreakdown" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_sufficient</bpmn:incoming>
+      <bpmn:incoming>Flow_rerun_simulation</bpmn:incoming>
+      <bpmn:outgoing>Flow_to_append_history</bpmn:outgoing>
+    </bpmn:callActivity>
+
+    <!-- Append simulation run to history -->
+    <bpmn:scriptTask id="Task_AppendHistory" name="Append to simulation history" scriptFormat="feel">
+      <bpmn:extensionElements>
+        <zeebe:script expression='= {
+          "simulationRunCount": simulationRunCount + 1,
+          "previousSimulationResult": if simulationRunCount > 0 then {
+            "projectedPensionMonthlyDKK": projectedPensionMonthlyDKK,
+            "salaryReplacementPct": salaryReplacementPct,
+            "totalMonthlyPremiumDKK": totalMonthlyPremiumDKK
+          } else null,
+          "simulationHistory": append(if simulationHistory = null then [] else simulationHistory, {
+            "runNumber": simulationRunCount + 1,
+            "projectedPensionMonthlyDKK": projectedPensionMonthlyDKK,
+            "salaryReplacementPct": salaryReplacementPct,
+            "totalMonthlyPremiumDKK": totalMonthlyPremiumDKK,
+            "coverageBreakdown": coverageBreakdown,
+            "monthlyContribution": monthlyContribution,
+            "riskProfile": riskProfile,
+            "desiredRetirementAge": desiredRetirementAge
+          })
+        }' resultVariable="historyUpdate" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_to_append_history</bpmn:incoming>
+      <bpmn:outgoing>Flow_to_build_iterate_prompt</bpmn:outgoing>
+    </bpmn:scriptTask>
+
+    <!-- Build iterate system prompt with simulation state -->
+    <bpmn:scriptTask id="Task_BuildIteratePrompt" name="Build iterate context" scriptFormat="feel">
+      <bpmn:extensionElements>
+        <zeebe:script expression='= {
+          "systemPromptIterate": "You are a pension advisor for Danica Pension. The user is reviewing their simulation and wants to explore configurations. Parse intent first using parse_intent tool. For CHANGE_PARAMETER: call update_parameter then run_simulation then get_simulation_result then explain_delta. For ASK_QUESTION: use query_knowledge_base. For CONFIRM or GENERATE_REPORT: call signal_complete.",
+          "userPromptIterate": "USER MESSAGE: " + (if incomingUserMessage = null then "Please review the simulation results." else incomingUserMessage) + " | SIMULATION: monthly=" + string(projectedPensionMonthlyDKK) + " DKK, replacement=" + string(salaryReplacementPct) + "%, premium=" + string(totalMonthlyPremiumDKK) + " DKK/month | CONFIG: contribution=" + string(monthlyContribution) + " DKK, risk=" + (if riskProfile = null then "MEDIUM" else riskProfile) + ", retirementAge=" + string(desiredRetirementAge)
+        }' resultVariable="iterateContext" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_to_build_iterate_prompt</bpmn:incoming>
+      <bpmn:outgoing>Flow_to_iterate_subprocess</bpmn:outgoing>
+    </bpmn:scriptTask>
+
+    <!-- ═══════════════════════════════════════════════════
+         AI AGENT SUB-PROCESS: ITERATE
+    ═══════════════════════════════════════════════════ -->
+    <bpmn:adHocSubProcess id="SubProcess_Iterate" name="AI Agent: Explore and Iterate"
+                          ordering="Parallel" cancelRemainingInstances="false">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="io.camunda:aws-bedrock-agent:1" />
+        <zeebe:taskHeaders>
+          <zeebe:header key="provider" value="BEDROCK" />
+          <zeebe:header key="region" value="eu-west-1" />
+          <zeebe:header key="modelId" value="anthropic.claude-3-5-sonnet-20241022-v2:0" />
+          <zeebe:header key="authType" value="IAM_ROLE" />
+          <zeebe:header key="memoryEnabled" value="true" />
+          <zeebe:header key="memoryStorage" value="DOCUMENT" />
+          <zeebe:header key="toolResolution" value="AUTO" />
+          <zeebe:header key="completionCondition" value="NO_TOOL_CALL" />
+          <zeebe:header key="systemPrompt" value="=iterateContext.systemPromptIterate" />
+          <zeebe:header key="userPrompt" value="=iterateContext.userPromptIterate" />
+        </zeebe:taskHeaders>
+        <zeebe:ioMapping>
+          <zeebe:output source="=lastIntentParsed" target="lastIntentParsed" />
+          <zeebe:output source="=incomingUserMessage" target="incomingUserMessage" />
+          <zeebe:output source="=monthlyContribution" target="monthlyContribution" />
+          <zeebe:output source="=riskProfile" target="riskProfile" />
+          <zeebe:output source="=desiredRetirementAge" target="desiredRetirementAge" />
+          <zeebe:output source="=criticalIllnessTier" target="criticalIllnessTier" />
+          <zeebe:output source="=lifeInsuranceEnabled" target="lifeInsuranceEnabled" />
+          <zeebe:output source="=aiExplanation" target="aiExplanation" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_to_iterate_subprocess</bpmn:incoming>
+      <bpmn:outgoing>Flow_to_satisfaction_gw</bpmn:outgoing>
+
+      <!-- Tools inside iterate ad-hoc sub-process -->
+      <bpmn:serviceTask id="Tool_ParseIntent" name="parse_intent">
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="tool-parse-intent" />
+        </bpmn:extensionElements>
+      </bpmn:serviceTask>
+      <bpmn:serviceTask id="Tool_UpdateParameter" name="update_parameter">
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="tool-update-parameter" />
+        </bpmn:extensionElements>
+      </bpmn:serviceTask>
+      <bpmn:serviceTask id="Tool_RunSimulation" name="run_simulation">
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="tool-run-simulation" />
+        </bpmn:extensionElements>
+      </bpmn:serviceTask>
+      <bpmn:serviceTask id="Tool_GetSimulationResult" name="get_simulation_result">
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="tool-get-simulation-result" />
+        </bpmn:extensionElements>
+      </bpmn:serviceTask>
+      <bpmn:serviceTask id="Tool_ExplainDelta" name="explain_delta">
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="tool-explain-delta" />
+        </bpmn:extensionElements>
+      </bpmn:serviceTask>
+      <bpmn:serviceTask id="Tool_QueryKB" name="query_knowledge_base">
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="tool-query-kb" />
+        </bpmn:extensionElements>
+      </bpmn:serviceTask>
+      <bpmn:serviceTask id="Tool_SignalComplete_Iterate" name="signal_complete">
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="tool-signal-complete" />
+        </bpmn:extensionElements>
+      </bpmn:serviceTask>
+
+      <bpmn:boundaryEvent id="BoundaryEvent_IterateTimeout" attachedToRef="SubProcess_Iterate" cancelActivity="true">
+        <bpmn:timerEventDefinition>
+          <bpmn:timeDuration>PT30M</bpmn:timeDuration>
+        </bpmn:timerEventDefinition>
+        <bpmn:outgoing>Flow_timeout_to_park</bpmn:outgoing>
+      </bpmn:boundaryEvent>
+    </bpmn:adHocSubProcess>
+
+    <!-- ═══════════════════════════════════════════════════
+         GATEWAY: Satisfaction check
+    ═══════════════════════════════════════════════════ -->
+    <bpmn:exclusiveGateway id="GW_Satisfaction" name="User satisfied?">
+      <bpmn:incoming>Flow_to_satisfaction_gw</bpmn:incoming>
+      <bpmn:outgoing>Flow_to_finalise</bpmn:outgoing>
+      <bpmn:outgoing>Flow_rerun_simulation</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+
+    <bpmn:sequenceFlow id="Flow_to_finalise" sourceRef="GW_Satisfaction" targetRef="Task_CompileReport">
+      <bpmn:conditionExpression>=lastIntentParsed.intent = "CONFIRM" or lastIntentParsed.intent = "GENERATE_REPORT"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_rerun_simulation" sourceRef="GW_Satisfaction" targetRef="SubProcess_Simulation">
+      <bpmn:conditionExpression>=lastIntentParsed.intent = "CHANGE_PARAMETER"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+
+    <!-- ═══════════════════════════════════════════════════
+         FINALISE: Compile and deliver report
+    ═══════════════════════════════════════════════════ -->
+    <bpmn:serviceTask id="Task_CompileReport" name="Compile final report dossier">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="compile-report" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_to_finalise</bpmn:incoming>
+      <bpmn:outgoing>Flow_to_deliver</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:serviceTask id="Task_DeliverReport" name="Deliver report to user">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="deliver-report" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_to_deliver</bpmn:incoming>
+      <bpmn:outgoing>Flow_to_end</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <!-- ═══════════════════════════════════════════════════
+         END + ERROR HANDLING
+    ═══════════════════════════════════════════════════ -->
+    <bpmn:endEvent id="EndEvent_Complete" name="Process complete">
+      <bpmn:incoming>Flow_to_end</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:endEvent id="EndEvent_Parked" name="Session parked — resume link sent">
+      <bpmn:incoming>Flow_timeout_to_park</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:endEvent id="EndEvent_Fallback" name="Agent fallback — support notified">
+      <bpmn:incoming>Flow_error_to_fallback</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <!-- ═══════════════════════════════════════════════════
+         SEQUENCE FLOWS
+    ═══════════════════════════════════════════════════ -->
+    <bpmn:sequenceFlow id="Flow_to_init" sourceRef="StartEvent_1" targetRef="Task_InitSession" />
+    <bpmn:sequenceFlow id="Flow_to_build_intake_prompt" sourceRef="Task_InitSession" targetRef="Task_BuildIntakePrompt" />
+    <bpmn:sequenceFlow id="Flow_to_intake_subprocess" sourceRef="Task_BuildIntakePrompt" targetRef="SubProcess_Intake" />
+    <bpmn:sequenceFlow id="Flow_to_sufficiency_gw" sourceRef="SubProcess_Intake" targetRef="GW_Sufficiency" />
+    <bpmn:sequenceFlow id="Flow_to_append_history" sourceRef="SubProcess_Simulation" targetRef="Task_AppendHistory" />
+    <bpmn:sequenceFlow id="Flow_to_build_iterate_prompt" sourceRef="Task_AppendHistory" targetRef="Task_BuildIteratePrompt" />
+    <bpmn:sequenceFlow id="Flow_to_iterate_subprocess" sourceRef="Task_BuildIteratePrompt" targetRef="SubProcess_Iterate" />
+    <bpmn:sequenceFlow id="Flow_to_satisfaction_gw" sourceRef="SubProcess_Iterate" targetRef="GW_Satisfaction" />
+    <bpmn:sequenceFlow id="Flow_to_deliver" sourceRef="Task_CompileReport" targetRef="Task_DeliverReport" />
+    <bpmn:sequenceFlow id="Flow_to_end" sourceRef="Task_DeliverReport" targetRef="EndEvent_Complete" />
+    <bpmn:sequenceFlow id="Flow_timeout_to_park" sourceRef="BoundaryEvent_IntakeTimeout" targetRef="EndEvent_Parked" />
+    <bpmn:sequenceFlow id="Flow_error_to_fallback" sourceRef="BoundaryEvent_IntakeError" targetRef="EndEvent_Fallback" />
+
+  </bpmn:process>
+
+  <!-- Error definition -->
+  <bpmn:error id="Error_AgentFailure" name="Agent Failure" errorCode="AGENT_FAILURE" />
+
+</bpmn:definitions>

@@ -1,0 +1,1021 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Noisn – Architecture Diagram</title>
+<style>
+  :root {
+    --blue:    #1B4F8A;
+    --blue-lt: #2563a8;
+    --green:   #1A7A3F;
+    --beige:   #F4F1EC;
+    --amber:   #C47A1E;
+    --purple:  #6B3FA0;
+    --red:     #B03030;
+    --gray:    #64748b;
+    --border:  #CBD5E1;
+    --bg:      #F8F6F1;
+    --white:   #FFFFFF;
+    --text:    #1E293B;
+    --shadow:  0 4px 16px rgba(0,0,0,.10);
+    --shadow-sm: 0 2px 6px rgba(0,0,0,.07);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+
+  /* ── Header ─────────────────────────────────────────── */
+  header {
+    background: var(--blue);
+    color: #fff;
+    padding: 24px 40px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    box-shadow: var(--shadow);
+  }
+  header h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: .02em; }
+  header p  { font-size: .85rem; opacity: .75; margin-top: 4px; }
+  .badge {
+    background: rgba(255,255,255,.15);
+    border: 1px solid rgba(255,255,255,.3);
+    border-radius: 20px;
+    padding: 4px 14px;
+    font-size: .78rem;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+  }
+
+  /* ── Tabs ────────────────────────────────────────────── */
+  .tabs {
+    display: flex;
+    gap: 4px;
+    padding: 16px 40px 0;
+    border-bottom: 2px solid var(--border);
+    background: var(--white);
+  }
+  .tab {
+    padding: 10px 22px;
+    border: none;
+    background: none;
+    font-size: .9rem;
+    font-weight: 500;
+    color: var(--gray);
+    cursor: pointer;
+    border-bottom: 3px solid transparent;
+    margin-bottom: -2px;
+    transition: all .2s;
+    border-radius: 6px 6px 0 0;
+  }
+  .tab:hover  { background: var(--beige); color: var(--blue); }
+  .tab.active { color: var(--blue); border-bottom-color: var(--blue); background: var(--bg); }
+
+  /* ── Main canvas ─────────────────────────────────────── */
+  .canvas {
+    padding: 36px 40px;
+    display: none;
+  }
+  .canvas.active { display: block; }
+
+  /* ── Section labels ──────────────────────────────────── */
+  .section-title {
+    font-size: .7rem;
+    font-weight: 700;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--gray);
+    margin-bottom: 14px;
+  }
+
+  /* ── Layer layout (system overview) ─────────────────── */
+  .layers {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .layer {
+    background: var(--white);
+    border: 1.5px solid var(--border);
+    border-radius: 14px;
+    padding: 20px 24px;
+    box-shadow: var(--shadow-sm);
+    position: relative;
+  }
+  .layer-label {
+    position: absolute;
+    top: -11px;
+    left: 20px;
+    font-size: .72rem;
+    font-weight: 700;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    padding: 2px 10px;
+    border-radius: 20px;
+    border: 1.5px solid;
+  }
+
+  .layer-ui     { border-color: #93C5FD; }
+  .layer-ui     .layer-label { background:#EFF6FF; color:#1D4ED8; border-color:#93C5FD; }
+
+  .layer-orch   { border-color: #6EE7B7; }
+  .layer-orch   .layer-label { background:#ECFDF5; color:#065F46; border-color:#6EE7B7; }
+
+  .layer-ai     { border-color: #C4B5FD; }
+  .layer-ai     .layer-label { background:#F5F3FF; color:#5B21B6; border-color:#C4B5FD; }
+
+  .layer-calc   { border-color: #FCD34D; }
+  .layer-calc   .layer-label { background:#FFFBEB; color:#92400E; border-color:#FCD34D; }
+
+  .layer-infra  { border-color: #FCA5A5; }
+  .layer-infra  .layer-label { background:#FEF2F2; color:#991B1B; border-color:#FCA5A5; }
+
+  .nodes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding-top: 6px;
+  }
+
+  .node {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--beige);
+    border: 1.5px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 16px;
+    font-size: .85rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all .2s;
+    position: relative;
+  }
+  .node:hover { transform: translateY(-2px); box-shadow: var(--shadow); }
+  .node.highlight { border-color: var(--blue); box-shadow: 0 0 0 2px rgba(27,79,138,.25); }
+
+  .node-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 7px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1rem;
+    flex-shrink: 0;
+  }
+
+  /* ── Arrows between layers ───────────────────────────── */
+  .arrow-row {
+    display: flex;
+    justify-content: center;
+    gap: 40px;
+    padding: 2px 0;
+  }
+  .arrow {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    font-size: .72rem;
+    color: var(--gray);
+  }
+  .arrow-line {
+    width: 2px;
+    height: 24px;
+    background: linear-gradient(to bottom, transparent, var(--border), var(--border), transparent);
+    position: relative;
+  }
+  .arrow-line::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 5px solid transparent;
+    border-top-color: var(--border);
+    border-bottom: none;
+  }
+  .arrow-label {
+    background: var(--white);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 2px 8px;
+    font-size: .68rem;
+    white-space: nowrap;
+  }
+
+  /* ── Data flow view ──────────────────────────────────── */
+  .flow {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    max-width: 720px;
+    margin: 0 auto;
+  }
+
+  .flow-step {
+    display: flex;
+    gap: 20px;
+    align-items: flex-start;
+    position: relative;
+  }
+
+  .flow-step:not(:last-child)::before {
+    content: '';
+    position: absolute;
+    left: 22px;
+    top: 46px;
+    width: 2px;
+    height: calc(100% - 10px);
+    background: var(--border);
+    z-index: 0;
+  }
+
+  .step-num {
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: .95rem;
+    flex-shrink: 0;
+    position: relative;
+    z-index: 1;
+    border: 2px solid;
+  }
+
+  .flow-card {
+    background: var(--white);
+    border: 1.5px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 20px;
+    flex: 1;
+    margin-bottom: 20px;
+    box-shadow: var(--shadow-sm);
+  }
+  .flow-card h3 { font-size: .92rem; font-weight: 700; margin-bottom: 6px; }
+  .flow-card p  { font-size: .82rem; color: var(--gray); line-height: 1.55; }
+
+  .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .tag {
+    font-size: .7rem;
+    font-weight: 600;
+    padding: 2px 9px;
+    border-radius: 10px;
+    border: 1px solid;
+  }
+
+  /* ── Component detail view ───────────────────────────── */
+  .comp-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 20px;
+  }
+
+  .comp-card {
+    background: var(--white);
+    border: 1.5px solid var(--border);
+    border-radius: 14px;
+    padding: 20px;
+    box-shadow: var(--shadow-sm);
+    transition: box-shadow .2s;
+  }
+  .comp-card:hover { box-shadow: var(--shadow); }
+
+  .comp-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+  .comp-icon {
+    width: 42px;
+    height: 42px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.4rem;
+    flex-shrink: 0;
+  }
+  .comp-card h3 { font-size: .95rem; font-weight: 700; }
+  .comp-card .tech { font-size: .75rem; color: var(--gray); margin-top: 2px; }
+
+  .comp-items { list-style: none; display: flex; flex-direction: column; gap: 7px; }
+  .comp-items li {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: .82rem;
+    color: var(--text);
+    line-height: 1.45;
+  }
+  .comp-items li::before {
+    content: '›';
+    font-weight: 700;
+    font-size: .9rem;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+
+  /* ── State/variables view ────────────────────────────── */
+  .vars-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 16px;
+  }
+  .vars-card {
+    background: var(--white);
+    border: 1.5px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    box-shadow: var(--shadow-sm);
+  }
+  .vars-card h4 {
+    font-size: .78rem;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+  .vars-card ul { list-style: none; display: flex; flex-direction: column; gap: 5px; }
+  .vars-card li {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-size: .8rem;
+  }
+  .var-name {
+    font-family: 'Cascadia Code', 'Fira Code', monospace;
+    font-size: .75rem;
+    background: var(--beige);
+    border-radius: 4px;
+    padding: 1px 6px;
+    color: var(--blue);
+    white-space: nowrap;
+  }
+  .var-desc { color: var(--gray); font-size: .78rem; }
+
+  /* ── Legend ──────────────────────────────────────────── */
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    padding: 16px 20px;
+    background: var(--white);
+    border: 1.5px solid var(--border);
+    border-radius: 12px;
+    margin-bottom: 24px;
+  }
+  .legend-item { display: flex; align-items: center; gap: 8px; font-size: .8rem; }
+  .legend-dot  { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+
+  /* ── Tooltip ─────────────────────────────────────────── */
+  .tooltip {
+    display: none;
+    position: fixed;
+    background: #1E293B;
+    color: #fff;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: .8rem;
+    max-width: 260px;
+    line-height: 1.5;
+    z-index: 999;
+    pointer-events: none;
+    box-shadow: 0 8px 24px rgba(0,0,0,.25);
+  }
+  .tooltip.show { display: block; }
+
+  /* ── Color helpers ───────────────────────────────────── */
+  .c-blue   { background: #DBEAFE; color: #1D4ED8; }
+  .c-green  { background: #D1FAE5; color: #065F46; }
+  .c-purple { background: #EDE9FE; color: #5B21B6; }
+  .c-amber  { background: #FEF3C7; color: #92400E; }
+  .c-red    { background: #FEE2E2; color: #991B1B; }
+  .c-teal   { background: #CCFBF1; color: #0F766E; }
+
+  .border-blue   { border-color: #3B82F6; }
+  .border-green  { border-color: #10B981; }
+  .border-purple { border-color: #8B5CF6; }
+  .border-amber  { border-color: #F59E0B; }
+
+  /* ── Connection lines SVG ────────────────────────────── */
+  .svg-canvas {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+    overflow: visible;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Noisn · System Architecture</h1>
+    <p>Danica Pension Configurator — Event-Driven AI Orchestration</p>
+  </div>
+  <span class="badge">v1.0</span>
+</header>
+
+<!-- Tabs -->
+<nav class="tabs">
+  <button class="tab active" onclick="showTab('overview')">System Overview</button>
+  <button class="tab" onclick="showTab('flow')">User Journey Flow</button>
+  <button class="tab" onclick="showTab('components')">Components</button>
+  <button class="tab" onclick="showTab('state')">Process State</button>
+</nav>
+
+<!-- ═══════════════════════════════════════════════════════
+     TAB 1 — SYSTEM OVERVIEW
+     ═══════════════════════════════════════════════════════ -->
+<div id="tab-overview" class="canvas active">
+
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#3B82F6"></div>Presentation</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#10B981"></div>Orchestration</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#8B5CF6"></div>AI / LLM</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#F59E0B"></div>Business Logic</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#EF4444"></div>Infrastructure</div>
+    <div class="legend-item" style="margin-left:auto;color:#64748b;font-size:.78rem">Click any node for details</div>
+  </div>
+
+  <div class="layers">
+
+    <!-- PRESENTATION -->
+    <div class="layer layer-ui">
+      <span class="layer-label">Presentation Layer</span>
+      <div class="nodes">
+        <div class="node"
+             data-tip="React 18 + Vite SPA. Polls Camunda variables every 2s. Renders chat, simulation gauge, report. Brand tokens: blue #1B4F8A, beige #F4F1EC."
+             onclick="highlight(this)">
+          <div class="node-icon c-blue">⚛️</div>
+          <div>
+            <div>React UI</div>
+            <div style="font-size:.72rem;color:#64748b">Vite · localhost:5173</div>
+          </div>
+        </div>
+        <div class="node"
+             data-tip="Demo wrapper shell around the production UI. Used for stakeholder previews and integration testing."
+             onclick="highlight(this)">
+          <div class="node-icon c-blue">🖥️</div>
+          <div>
+            <div>Demo Shell</div>
+            <div style="font-size:.72rem;color:#64748b">demo/</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- arrow -->
+    <div class="arrow-row">
+      <div class="arrow">
+        <div class="arrow-label">HTTP GET/PUT · poll vars &amp; send answers</div>
+        <div class="arrow-line"></div>
+      </div>
+    </div>
+
+    <!-- ORCHESTRATION -->
+    <div class="layer layer-orch">
+      <span class="layer-label">Orchestration Layer</span>
+      <div class="nodes">
+        <div class="node"
+             data-tip="Camunda 8 Cloud BPMN engine. Manages the full pension-configurator.bpmn process: Intake → Simulation → Iterate → Report. All session state stored as process variables."
+             onclick="highlight(this)">
+          <div class="node-icon c-green">⚙️</div>
+          <div>
+            <div>Camunda 8 (Zeebe)</div>
+            <div style="font-size:.72rem;color:#64748b">Process orchestration · BPMN 2.0</div>
+          </div>
+        </div>
+        <div class="node"
+             data-tip="pension-configurator.bpmn defines: Start → Init Session → Intake (ad-hoc) → Simulation subprocess → Iterate (ad-hoc) → Report → End. Boundary events: 30 min timeout, agent failure."
+             onclick="highlight(this)">
+          <div class="node-icon c-green">📋</div>
+          <div>
+            <div>BPMN Process</div>
+            <div style="font-size:.72rem;color:#64748b">pension-configurator.bpmn</div>
+          </div>
+        </div>
+        <div class="node"
+             data-tip="Python pyzeebe workers subscribe to Zeebe job topics via gRPC. Execute tools (14+), update process variables, call downstream APIs."
+             onclick="highlight(this)">
+          <div class="node-icon c-green">🔧</div>
+          <div>
+            <div>Job Workers</div>
+            <div style="font-size:.72rem;color:#64748b">pyzeebe · workers/</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- arrow -->
+    <div class="arrow-row">
+      <div class="arrow">
+        <div class="arrow-label">boto3 · Bedrock Converse API</div>
+        <div class="arrow-line"></div>
+      </div>
+      <div class="arrow">
+        <div class="arrow-label">HTTP POST · /simulate · /eligibility</div>
+        <div class="arrow-line"></div>
+      </div>
+    </div>
+
+    <!-- AI + CALC (side by side) -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+
+      <div class="layer layer-ai">
+        <span class="layer-label">AI / LLM Layer</span>
+        <div class="nodes" style="flex-direction:column;">
+          <div class="node"
+               data-tip="AWS Bedrock – Claude 3.5 Sonnet model via Converse API. Used for: conversational intake, intent parsing (CHANGE_PARAMETER / ASK_QUESTION / CONFIRM), delta explanations, sufficiency scoring (0–100)."
+               onclick="highlight(this)">
+            <div class="node-icon c-purple">🤖</div>
+            <div>
+              <div>AWS Bedrock (Claude)</div>
+              <div style="font-size:.72rem;color:#64748b">Claude 3.5 Sonnet · Converse API</div>
+            </div>
+          </div>
+          <div class="node"
+               data-tip="Bedrock Knowledge Base — product documentation for DANICA_BALANCE and DANICA_LINK. Queried via RetrieveAndGenerate API when user asks product questions during Iterate phase."
+               onclick="highlight(this)">
+            <div class="node-icon c-purple">📚</div>
+            <div>
+              <div>Knowledge Base (KB)</div>
+              <div style="font-size:.72rem;color:#64748b">Bedrock RAG · product docs</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="layer layer-calc">
+        <span class="layer-label">Business Logic Layer</span>
+        <div class="nodes" style="flex-direction:column;">
+          <div class="node"
+               data-tip="FastAPI stateless calculator. POST /simulate runs: FV of contributions (compound monthly), annuity payout, coverage premiums, gap-to-80%-target analysis. Returns full SimulationResult."
+               onclick="highlight(this)">
+            <div class="node-icon c-amber">🧮</div>
+            <div>
+              <div>Calculator API</div>
+              <div style="font-size:.72rem;color:#64748b">FastAPI · localhost:8001</div>
+            </div>
+          </div>
+          <div class="node"
+               data-tip="POST /eligibility checks rule-based eligibility per cover type: critical illness (age ≤ 65), life insurance (employment status), health modules (product restrictions), etc."
+               onclick="highlight(this)">
+            <div class="node-icon c-amber">✅</div>
+            <div>
+              <div>Eligibility Engine</div>
+              <div style="font-size:.72rem;color:#64748b">Pydantic rules · api/</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- arrow -->
+    <div class="arrow-row">
+      <div class="arrow">
+        <div class="arrow-label">IAM roles · AWS SDK</div>
+        <div class="arrow-line"></div>
+      </div>
+    </div>
+
+    <!-- INFRA -->
+    <div class="layer layer-infra">
+      <span class="layer-label">Infrastructure</span>
+      <div class="nodes">
+        <div class="node"
+             data-tip="Camunda 8 Cloud — managed Zeebe cluster. Provides gRPC endpoint (ZEEBE_ADDRESS), REST API (CAMUNDA_REST_URL), OAuth tokens."
+             onclick="highlight(this)">
+          <div class="node-icon c-red">☁️</div>
+          <div>
+            <div>Camunda Cloud</div>
+            <div style="font-size:.72rem;color:#64748b">Managed Zeebe gRPC + REST</div>
+          </div>
+        </div>
+        <div class="node"
+             data-tip="AWS account hosting Bedrock (Claude model access), Bedrock Knowledge Base (vector store), IAM roles. Region configured via AWS_REGION env var."
+             onclick="highlight(this)">
+          <div class="node-icon c-red">🟠</div>
+          <div>
+            <div>AWS (Bedrock + IAM)</div>
+            <div style="font-size:.72rem;color:#64748b">us-east-1 · boto3</div>
+          </div>
+        </div>
+        <div class="node"
+             data-tip="Environment configuration: ZEEBE_ADDRESS, ZEEBE_CLIENT_ID/SECRET, AWS_REGION, AWS_ACCESS_KEY_ID/SECRET, BEDROCK_MODEL_ID, BEDROCK_KB_ID, CALCULATOR_API_URL, CAMUNDA_REST_URL/TOKEN."
+             onclick="highlight(this)">
+          <div class="node-icon c-red">🔑</div>
+          <div>
+            <div>Env Config</div>
+            <div style="font-size:.72rem;color:#64748b">.env · python-dotenv</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /layers -->
+</div><!-- /tab-overview -->
+
+
+<!-- ═══════════════════════════════════════════════════════
+     TAB 2 — USER JOURNEY FLOW
+     ═══════════════════════════════════════════════════════ -->
+<div id="tab-flow" class="canvas">
+
+  <div class="flow">
+
+    <div class="flow-step">
+      <div class="step-num c-blue border-blue">1</div>
+      <div class="flow-card">
+        <h3>Product Selection</h3>
+        <p>User opens the React UI and selects a pension product. This triggers a Camunda process instance start via the REST API, passing the chosen <code>productCode</code>.</p>
+        <div class="tags">
+          <span class="tag c-blue">React UI</span>
+          <span class="tag c-green">Camunda REST</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="step-num c-green border-green">2</div>
+      <div class="flow-card">
+        <h3>Session Initialisation</h3>
+        <p>The <strong>init-session</strong> worker runs first, loading product defaults (DANICA_BALANCE or DANICA_LINK) into process variables — contribution limits, risk profiles, payout options.</p>
+        <div class="tags">
+          <span class="tag c-green">init-session worker</span>
+          <span class="tag c-amber">Product defaults</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="step-num c-purple border-purple">3</div>
+      <div class="flow-card">
+        <h3>Intake Phase (Ad-hoc Subprocess)</h3>
+        <p>Claude drives a conversational loop: <strong>ask-question → store-answer</strong>. UI polls <code>pendingQuestion</code> every 2 s, user replies, worker parses &amp; stores the typed answer. The <strong>assess-sufficiency</strong> tool scores completeness (0–100); loop exits when score ≥ 80.</p>
+        <div class="tags">
+          <span class="tag c-purple">Claude 3.5 Sonnet</span>
+          <span class="tag c-green">tool-ask-question</span>
+          <span class="tag c-green">tool-store-answer</span>
+          <span class="tag c-green">tool-assess-sufficiency</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="step-num c-amber border-amber">4</div>
+      <div class="flow-card">
+        <h3>Eligibility Check</h3>
+        <p>Before simulation the <strong>check-eligibility</strong> worker calls <code>POST /eligibility</code> on the Calculator API. Rule-based checks determine which covers (critical illness, life insurance, health modules) are available based on age and employment status.</p>
+        <div class="tags">
+          <span class="tag c-amber">Calculator API</span>
+          <span class="tag c-green">tool-check-eligibility</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="step-num c-amber border-amber">5</div>
+      <div class="flow-card">
+        <h3>Simulation (Call Activity Subprocess)</h3>
+        <p>The <strong>run-simulation</strong> worker calls <code>POST /simulate</code>. The Calculator computes: future value of contributions (compound monthly interest), annuity monthly payout, itemised coverage premiums, salary-replacement %, gap to 80% target. Results stored in process variables.</p>
+        <div class="tags">
+          <span class="tag c-amber">POST /simulate</span>
+          <span class="tag c-green">tool-run-simulation</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="step-num c-purple border-purple">6</div>
+      <div class="flow-card">
+        <h3>Iterate Phase (Ad-hoc Subprocess)</h3>
+        <p>Claude presents results. User explores "what-if" scenarios in plain language. <strong>parse-intent</strong> classifies each message:</p>
+        <ul style="margin:8px 0 8px 16px;font-size:.82rem;color:#334155;line-height:1.8;">
+          <li><strong>CHANGE_PARAMETER</strong> → update-parameter → re-run simulation → explain-delta</li>
+          <li><strong>ASK_QUESTION</strong> → query-kb (Bedrock Knowledge Base RAG)</li>
+          <li><strong>CONFIRM</strong> → exit iterate phase → compile report</li>
+        </ul>
+        <div class="tags">
+          <span class="tag c-purple">Claude 3.5 Sonnet</span>
+          <span class="tag c-purple">Bedrock KB (RAG)</span>
+          <span class="tag c-green">tool-parse-intent</span>
+          <span class="tag c-green">tool-update-parameter</span>
+          <span class="tag c-green">tool-explain-delta</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="step-num c-blue border-blue">7</div>
+      <div class="flow-card">
+        <h3>Report Generation &amp; Delivery</h3>
+        <p><strong>compile-report</strong> assembles the final dossier from all variables (profile, configuration, full simulation history across all runs). <strong>deliver-report</strong> sets <code>reportReady=true</code>. UI detects this and switches to the report view — a multi-run comparison with replacement gauge.</p>
+        <div class="tags">
+          <span class="tag c-green">compile-report</span>
+          <span class="tag c-green">deliver-report</span>
+          <span class="tag c-blue">React Report View</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div><!-- /tab-flow -->
+
+
+<!-- ═══════════════════════════════════════════════════════
+     TAB 3 — COMPONENT DETAIL
+     ═══════════════════════════════════════════════════════ -->
+<div id="tab-components" class="canvas">
+  <div class="comp-grid">
+
+    <div class="comp-card">
+      <div class="comp-header">
+        <div class="comp-icon c-blue">⚛️</div>
+        <div>
+          <h3>React UI</h3>
+          <div class="tech">ui/ · React 18.3 · Vite 5.4</div>
+        </div>
+      </div>
+      <ul class="comp-items">
+        <li>ReplacementGauge — visual % toward 80% salary replacement target</li>
+        <li>SimulationReport — results, costs, config history, multi-run comparison</li>
+        <li>ChatBubble — conversation UI with typing animation</li>
+        <li>Product selection screen (DANICA_BALANCE / DANICA_LINK)</li>
+        <li>2-second polling loop on Camunda process variables</li>
+        <li>Writes incomingUserMessage → triggers worker to resume</li>
+      </ul>
+    </div>
+
+    <div class="comp-card">
+      <div class="comp-header">
+        <div class="comp-icon c-green">⚙️</div>
+        <div>
+          <h3>Camunda 8 / Zeebe</h3>
+          <div class="tech">Managed cloud · BPMN 2.0 · gRPC</div>
+        </div>
+      </div>
+      <ul class="comp-items">
+        <li>Hosts pension-configurator.bpmn process definition</li>
+        <li>Manages process instances; all session state as variables</li>
+        <li>Distributes job tasks to pyzeebe workers via gRPC</li>
+        <li>REST API for UI to read/write variables and send messages</li>
+        <li>Boundary error events for 30-min timeout &amp; agent failures</li>
+        <li>Call activity pattern for reusable simulation subprocess</li>
+      </ul>
+    </div>
+
+    <div class="comp-card">
+      <div class="comp-header">
+        <div class="comp-icon c-green">🔧</div>
+        <div>
+          <h3>Job Workers</h3>
+          <div class="tech">workers/ · Python · pyzeebe 4.4</div>
+        </div>
+      </div>
+      <ul class="comp-items">
+        <li>14+ workers subscribing to Zeebe gRPC job stream</li>
+        <li>bedrock_client.py — invoke_llm, invoke_llm_json, query_knowledge_base</li>
+        <li>camunda_client.py — get/set process variables, send messages</li>
+        <li>prompts.py — INTAKE, ITERATE, DELTA, SUFFICIENCY system prompts</li>
+        <li>tools/workers.py — all tool implementations (ask, store, simulate, …)</li>
+      </ul>
+    </div>
+
+    <div class="comp-card">
+      <div class="comp-header">
+        <div class="comp-icon c-purple">🤖</div>
+        <div>
+          <h3>AWS Bedrock (Claude)</h3>
+          <div class="tech">boto3 · Claude 3.5 Sonnet · Converse API</div>
+        </div>
+      </div>
+      <ul class="comp-items">
+        <li>Drives conversational intake — decide what to ask next</li>
+        <li>Scores information sufficiency 0–100 as JSON</li>
+        <li>Parses natural-language intent → structured JSON action</li>
+        <li>Generates delta explanations (plain Danish/English)</li>
+        <li>RetrieveAndGenerate for KB-backed product Q&amp;A</li>
+      </ul>
+    </div>
+
+    <div class="comp-card">
+      <div class="comp-header">
+        <div class="comp-icon c-purple">📚</div>
+        <div>
+          <h3>Bedrock Knowledge Base</h3>
+          <div class="tech">Bedrock KB · RAG · Vector store</div>
+        </div>
+      </div>
+      <ul class="comp-items">
+        <li>Stores DANICA_BALANCE and DANICA_LINK product documentation</li>
+        <li>Queried via RetrieveAndGenerate API (tool-query-kb worker)</li>
+        <li>Grounds AI answers about product features, terms, limits</li>
+        <li>Activated during Iterate phase for ASK_QUESTION intents</li>
+      </ul>
+    </div>
+
+    <div class="comp-card">
+      <div class="comp-header">
+        <div class="comp-icon c-amber">🧮</div>
+        <div>
+          <h3>Calculator API</h3>
+          <div class="tech">api/ · FastAPI 0.115 · Pydantic 2.9</div>
+        </div>
+      </div>
+      <ul class="comp-items">
+        <li>POST /simulate — full pension projection + premium breakdown</li>
+        <li>POST /eligibility — rule-based cover eligibility flags</li>
+        <li>GET /products/{code}/defaults — product configuration defaults</li>
+        <li>Stateless — no persistence, pure calculation functions</li>
+        <li>calculate_pension_amount: FV compound monthly interest</li>
+        <li>calculate_monthly_pension_payout: annuity drawdown at 2%</li>
+        <li>calculate_coverage_premiums: itemised insurance costs</li>
+      </ul>
+    </div>
+
+    <div class="comp-card">
+      <div class="comp-header">
+        <div class="comp-icon" style="background:#FEF2F2;font-size:1.4rem">📋</div>
+        <div>
+          <h3>BPMN Process</h3>
+          <div class="tech">bpmn/ · pension-configurator.bpmn</div>
+        </div>
+      </div>
+      <ul class="comp-items">
+        <li>Start Event → init-session service task</li>
+        <li>Intake Ad-hoc Subprocess (conversational loop)</li>
+        <li>pension-simulation Call Activity (reusable subprocess)</li>
+        <li>Iterate Ad-hoc Subprocess (explore &amp; adjust)</li>
+        <li>compile-report + deliver-report service tasks</li>
+        <li>End Event; boundary: 30-min timer, agent-error escalation</li>
+      </ul>
+    </div>
+
+    <div class="comp-card">
+      <div class="comp-header">
+        <div class="comp-icon c-red">☁️</div>
+        <div>
+          <h3>Infrastructure</h3>
+          <div class="tech">Camunda Cloud · AWS · .env</div>
+        </div>
+      </div>
+      <ul class="comp-items">
+        <li>ZEEBE_ADDRESS / CLIENT_ID / CLIENT_SECRET → Camunda cluster auth</li>
+        <li>CAMUNDA_REST_URL / TOKEN → REST API for UI &amp; workers</li>
+        <li>AWS_REGION / ACCESS_KEY / SECRET → Bedrock access</li>
+        <li>BEDROCK_MODEL_ID → Claude model selection</li>
+        <li>BEDROCK_KB_ID → Knowledge Base identifier</li>
+        <li>CALCULATOR_API_URL → internal API endpoint for workers</li>
+      </ul>
+    </div>
+
+  </div>
+</div><!-- /tab-components -->
+
+
+<!-- ═══════════════════════════════════════════════════════
+     TAB 4 — PROCESS STATE
+     ═══════════════════════════════════════════════════════ -->
+<div id="tab-state" class="canvas">
+  <p style="color:var(--gray);font-size:.85rem;margin-bottom:20px">All session state lives in Camunda process variables — no separate database. Workers read and write these atomically.</p>
+
+  <div class="vars-grid">
+
+    <div class="vars-card">
+      <h4><span>👤</span> User Profile</h4>
+      <ul>
+        <li><span class="var-name">age</span><span class="var-desc">integer, years</span></li>
+        <li><span class="var-name">annualSalary</span><span class="var-desc">DKK/year</span></li>
+        <li><span class="var-name">employmentStatus</span><span class="var-desc">employed / self-employed</span></li>
+        <li><span class="var-name">desiredRetirementAge</span><span class="var-desc">integer</span></li>
+        <li><span class="var-name">hasPartner</span><span class="var-desc">boolean</span></li>
+        <li><span class="var-name">hasDependants</span><span class="var-desc">boolean</span></li>
+        <li><span class="var-name">housingType</span><span class="var-desc">owned / rented</span></li>
+        <li><span class="var-name">homeEquityDKK</span><span class="var-desc">number</span></li>
+        <li><span class="var-name">otherSavingsDKK</span><span class="var-desc">number</span></li>
+      </ul>
+    </div>
+
+    <div class="vars-card">
+      <h4><span>⚙️</span> Configuration</h4>
+      <ul>
+        <li><span class="var-name">productCode</span><span class="var-desc">DANICA_BALANCE / DANICA_LINK</span></li>
+        <li><span class="var-name">monthlyContribution</span><span class="var-desc">DKK/month</span></li>
+        <li><span class="var-name">riskProfile</span><span class="var-desc">low / medium / high</span></li>
+        <li><span class="var-name">payoutType</span><span class="var-desc">annuity / lump-sum</span></li>
+        <li><span class="var-name">earningCapacityCoverEndAge</span><span class="var-desc">integer</span></li>
+        <li><span class="var-name">criticalIllnessTier</span><span class="var-desc">none / basic / extended</span></li>
+        <li><span class="var-name">lifeInsuranceEnabled</span><span class="var-desc">boolean</span></li>
+        <li><span class="var-name">healthInsuranceModules</span><span class="var-desc">array</span></li>
+      </ul>
+    </div>
+
+    <div class="vars-card">
+      <h4><span>📊</span> Simulation Results</h4>
+      <ul>
+        <li><span class="var-name">projectedPensionMonthlyDKK</span><span class="var-desc">computed</span></li>
+        <li><span class="var-name">projectedPensionAnnualDKK</span><span class="var-desc">computed</span></li>
+        <li><span class="var-name">salaryReplacementPct</span><span class="var-desc">0–100 %</span></li>
+        <li><span class="var-name">totalMonthlyPremiumDKK</span><span class="var-desc">DKK/month</span></li>
+        <li><span class="var-name">coverageBreakdown</span><span class="var-desc">itemised JSON</span></li>
+        <li><span class="var-name">reachesTarget</span><span class="var-desc">boolean (target = 80%)</span></li>
+        <li><span class="var-name">gapToTargetDKK</span><span class="var-desc">DKK/month shortfall</span></li>
+        <li><span class="var-name">simulationHistory</span><span class="var-desc">array of all runs</span></li>
+      </ul>
+    </div>
+
+    <div class="vars-card">
+      <h4><span>🤖</span> AI State</h4>
+      <ul>
+        <li><span class="var-name">pendingQuestion</span><span class="var-desc">text for UI to show</span></li>
+        <li><span class="var-name">incomingUserMessage</span><span class="var-desc">user's typed reply</span></li>
+        <li><span class="var-name">sufficiencyScore</span><span class="var-desc">0–100 (exit at ≥80)</span></li>
+        <li><span class="var-name">lastIntentParsed</span><span class="var-desc">CHANGE / ASK / CONFIRM</span></li>
+        <li><span class="var-name">eligibilityFlags</span><span class="var-desc">map: cover → boolean</span></li>
+        <li><span class="var-name">aiExplanation</span><span class="var-desc">plain-language summary</span></li>
+      </ul>
+    </div>
+
+    <div class="vars-card">
+      <h4><span>📝</span> Metadata</h4>
+      <ul>
+        <li><span class="var-name">processInstanceKey</span><span class="var-desc">Zeebe instance ID</span></li>
+        <li><span class="var-name">sessionStartedAt</span><span class="var-desc">ISO timestamp</span></li>
+        <li><span class="var-name">simulationRunCount</span><span class="var-desc">integer</span></li>
+        <li><span class="var-name">reportReady</span><span class="var-desc">boolean (UI trigger)</span></li>
+        <li><span class="var-name">finalReport</span><span class="var-desc">compiled dossier JSON</span></li>
+      </ul>
+    </div>
+
+    <div class="vars-card" style="background:linear-gradient(135deg,#EFF6FF,#F0FDF4);">
+      <h4 style="color:var(--blue)"><span>🔄</span> State Machine Flow</h4>
+      <div style="font-size:.8rem;color:#334155;line-height:2;">
+        <div>▸ <strong>INIT</strong> → defaults loaded</div>
+        <div>▸ <strong>INTAKE</strong> → profile variables filled</div>
+        <div>▸ <strong>ELIGIBILITY</strong> → flags set</div>
+        <div>▸ <strong>SIMULATING</strong> → results written</div>
+        <div>▸ <strong>ITERATING</strong> → history grows</div>
+        <div>▸ <strong>REPORT_READY</strong> → reportReady=true</div>
+      </div>
+    </div>
+
+  </div>
+</div><!-- /tab-state -->
+
+<!-- Tooltip -->
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+  // Tab switching
+  function showTab(name) {
+    document.querySelectorAll('.canvas').forEach(c => c.classList.remove('active'));
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.getElementById('tab-' + name).classList.add('active');
+    event.target.classList.add('active');
+  }
+
+  // Node highlight
+  function highlight(el) {
+    document.querySelectorAll('.node').forEach(n => n.classList.remove('highlight'));
+    el.classList.add('highlight');
+    setTimeout(() => el.classList.remove('highlight'), 2000);
+  }
+
+  // Tooltip
+  const tooltip = document.getElementById('tooltip');
+  document.querySelectorAll('[data-tip]').forEach(el => {
+    el.addEventListener('mouseenter', e => {
+      tooltip.textContent = el.dataset.tip;
+      tooltip.classList.add('show');
+    });
+    el.addEventListener('mousemove', e => {
+      let x = e.clientX + 16, y = e.clientY + 12;
+      if (x + 280 > window.innerWidth) x = e.clientX - 270;
+      if (y + 120 > window.innerHeight) y = e.clientY - 90;
+      tooltip.style.left = x + 'px';
+      tooltip.style.top  = y + 'px';
+    });
+    el.addEventListener('mouseleave', () => tooltip.classList.remove('show'));
+  });
+</script>
+</body>
+</html>

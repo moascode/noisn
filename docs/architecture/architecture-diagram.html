@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Danica Pension Configurator — Architecture</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #0f1117;
+    color: #e2e8f0;
+    padding: 32px;
+    min-height: 100vh;
+  }
+
+  h1 {
+    font-size: 22px;
+    font-weight: 600;
+    color: #f8fafc;
+    margin-bottom: 6px;
+    letter-spacing: -0.3px;
+  }
+
+  .subtitle {
+    font-size: 13px;
+    color: #64748b;
+    margin-bottom: 36px;
+  }
+
+  .canvas {
+    position: relative;
+    width: 100%;
+    max-width: 1280px;
+    margin: 0 auto;
+  }
+
+  /* ── Swimlane zones ── */
+  .zone {
+    position: relative;
+    border-radius: 14px;
+    padding: 20px 24px 24px;
+    margin-bottom: 16px;
+  }
+
+  .zone-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    margin-bottom: 16px;
+    opacity: 0.7;
+  }
+
+  .zone-client   { background: #1e2a3a; border: 1px solid #2563eb44; }
+  .zone-broker   { background: #1e2a1e; border: 1px solid #16a34a44; }
+  .zone-camunda  { background: #2a1e2a; border: 1px solid #9333ea44; }
+  .zone-workers  { background: #2a1e1e; border: 1px solid #dc262644; }
+  .zone-external { background: #1e1e2a; border: 1px solid #475569; }
+
+  .zone-label-client   { color: #60a5fa; }
+  .zone-label-broker   { color: #4ade80; }
+  .zone-label-camunda  { color: #c084fc; }
+  .zone-label-workers  { color: #f87171; }
+  .zone-label-external { color: #94a3b8; }
+
+  /* ── Component row ── */
+  .row {
+    display: flex;
+    align-items: stretch;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+
+  /* ── Component card ── */
+  .card {
+    border-radius: 10px;
+    padding: 14px 16px;
+    min-width: 150px;
+    flex: 1;
+    position: relative;
+    transition: transform 0.15s, box-shadow 0.15s;
+    cursor: default;
+  }
+  .card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  }
+
+  .card-icon { font-size: 22px; margin-bottom: 8px; display: block; }
+  .card-name { font-size: 13px; font-weight: 600; color: #f1f5f9; margin-bottom: 4px; }
+  .card-desc { font-size: 11px; color: #94a3b8; line-height: 1.5; }
+  .card-tag  {
+    display: inline-block; margin-top: 8px;
+    font-size: 10px; font-weight: 600; letter-spacing: 0.5px;
+    padding: 2px 7px; border-radius: 4px;
+  }
+
+  /* card colour variants */
+  .card-blue   { background: #1e3a5f; border: 1px solid #3b82f6; }
+  .card-green  { background: #14291a; border: 1px solid #22c55e; }
+  .card-purple { background: #2d1b4e; border: 1px solid #a855f7; }
+  .card-pink   { background: #3b1a2e; border: 1px solid #ec4899; }
+  .card-orange { background: #3b2200; border: 1px solid #f97316; }
+  .card-gray   { background: #1e2533; border: 1px solid #475569; }
+  .card-teal   { background: #0f2d2d; border: 1px solid #14b8a6; }
+  .card-red    { background: #3b1010; border: 1px solid #ef4444; }
+  .card-amber  { background: #2d1e00; border: 1px solid #f59e0b; }
+
+  .tag-blue   { background: #1e40af; color: #93c5fd; }
+  .tag-green  { background: #14532d; color: #86efac; }
+  .tag-purple { background: #4c1d95; color: #d8b4fe; }
+  .tag-orange { background: #7c2d12; color: #fdba74; }
+  .tag-teal   { background: #134e4a; color: #5eead4; }
+  .tag-gray   { background: #1e293b; color: #94a3b8; }
+  .tag-amber  { background: #78350f; color: #fcd34d; }
+
+  /* ── Sub-zone (Camunda internals) ── */
+  .subzone {
+    border-radius: 8px;
+    border: 1px dashed #6b21a8;
+    padding: 14px 16px;
+    flex: 3;
+    min-width: 300px;
+  }
+  .subzone-label {
+    font-size: 10px; color: #c084fc; font-weight: 700;
+    letter-spacing: 1px; text-transform: uppercase; margin-bottom: 12px;
+  }
+
+  /* ── Arrows ── */
+  .arrows-svg {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+    overflow: visible;
+  }
+
+  /* ── Flow connector ── */
+  .flow-row {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    margin: 8px 0;
+  }
+  .flow-line {
+    height: 2px;
+    flex: 1;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .flow-label {
+    font-size: 10px;
+    white-space: nowrap;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-weight: 600;
+  }
+
+  /* ── Vertical connector ── */
+  .connector {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin: -4px auto;
+    z-index: 10;
+    position: relative;
+  }
+  .connector-line {
+    width: 2px;
+    height: 24px;
+  }
+  .connector-arrow {
+    width: 0; height: 0;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+  }
+  .connector-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    margin: 3px 0;
+    white-space: nowrap;
+  }
+
+  /* connector colours */
+  .conn-ws    .connector-line  { background: #6366f1; }
+  .conn-ws    .connector-arrow { border-top: 8px solid #6366f1; }
+  .conn-ws    .connector-label { background: #312e81; color: #a5b4fc; border: 1px solid #6366f1; }
+
+  .conn-rest  .connector-line  { background: #f59e0b; }
+  .conn-rest  .connector-arrow { border-top: 8px solid #f59e0b; }
+  .conn-rest  .connector-label { background: #78350f; color: #fcd34d; border: 1px solid #f59e0b; }
+
+  .conn-zeebe .connector-line  { background: #a855f7; }
+  .conn-zeebe .connector-arrow { border-top: 8px solid #a855f7; }
+  .conn-zeebe .connector-label { background: #4c1d95; color: #d8b4fe; border: 1px solid #a855f7; }
+
+  .conn-http  .connector-line  { background: #22c55e; }
+  .conn-http  .connector-arrow { border-top: 8px solid #22c55e; }
+  .conn-http  .connector-label { background: #14532d; color: #86efac; border: 1px solid #22c55e; }
+
+  /* ── Legend ── */
+  .legend {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+    margin-top: 24px;
+    padding: 14px 18px;
+    background: #161b25;
+    border-radius: 10px;
+    border: 1px solid #1e293b;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: #94a3b8;
+  }
+  .legend-line {
+    width: 28px; height: 2px; border-radius: 1px;
+  }
+
+  /* ── Notes ── */
+  .notes {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+    margin-top: 16px;
+  }
+  .note {
+    background: #161b25;
+    border-left: 3px solid;
+    border-radius: 0 8px 8px 0;
+    padding: 10px 12px;
+    font-size: 11px;
+    color: #94a3b8;
+    line-height: 1.5;
+  }
+  .note strong { color: #e2e8f0; display: block; margin-bottom: 3px; font-size: 12px; }
+
+  /* bidirectional arrow between zones */
+  .bidir {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin: -8px 0;
+    position: relative;
+    z-index: 5;
+  }
+  .bidir-line {
+    display: flex;
+    align-items: center;
+    gap: 0;
+  }
+</style>
+</head>
+<body>
+
+<div class="canvas">
+
+  <h1>Danica Pension Configurator</h1>
+  <p class="subtitle">Solution Architecture · WebSocket + Camunda AI Agent Connector · June 2026</p>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       LAYER 1 — CLIENT
+  ═══════════════════════════════════════════════════════════ -->
+  <div class="zone zone-client">
+    <div class="zone-label zone-label-client">Client Layer</div>
+    <div class="row">
+
+      <div class="card card-blue">
+        <span class="card-icon">🖥️</span>
+        <div class="card-name">React UI</div>
+        <div class="card-desc">Chat interface + live simulation report panel.<br>Sends user messages, renders agent responses, updates report in real-time.</div>
+        <span class="card-tag tag-blue">React 18 · Vite</span>
+      </div>
+
+      <div class="card card-blue" style="flex:2">
+        <span class="card-icon">💬</span>
+        <div class="card-name">WebSocket Client</div>
+        <div class="card-desc">
+          Persistent browser WebSocket to Session Broker.<br><br>
+          <strong style="color:#93c5fd">Sends:</strong> <code style="color:#c4b5fd;background:#1e1b4b;padding:1px 4px;border-radius:3px">start_session</code> · <code style="color:#c4b5fd;background:#1e1b4b;padding:1px 4px;border-radius:3px">user_message</code> · <code style="color:#c4b5fd;background:#1e1b4b;padding:1px 4px;border-radius:3px">resume_session</code><br>
+          <strong style="color:#93c5fd">Receives:</strong> <code style="color:#86efac;background:#14532d;padding:1px 4px;border-radius:3px">question</code> · <code style="color:#86efac;background:#14532d;padding:1px 4px;border-radius:3px">summary</code> · <code style="color:#86efac;background:#14532d;padding:1px 4px;border-radius:3px">report</code> · <code style="color:#86efac;background:#14532d;padding:1px 4px;border-radius:3px">agent_message</code>
+        </div>
+        <span class="card-tag tag-blue">Browser WebSocket API</span>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- CONNECTOR: WebSocket -->
+  <div class="connector conn-ws" style="width:320px">
+    <div class="connector-line"></div>
+    <div class="connector-label">WebSocket  ↕  ws://broker:3001</div>
+    <div class="connector-line"></div>
+    <div class="connector-arrow"></div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       LAYER 2 — SESSION BROKER
+  ═══════════════════════════════════════════════════════════ -->
+  <div class="zone zone-broker">
+    <div class="zone-label zone-label-broker">Session Broker  <span style="font-weight:400;opacity:0.6">· New Component</span></div>
+    <div class="row">
+
+      <div class="card card-green">
+        <span class="card-icon">🔀</span>
+        <div class="card-name">WebSocket Server</div>
+        <div class="card-desc">Accepts browser connections. Assigns sessionId. Manages connection lifecycle.</div>
+        <span class="card-tag tag-green">Node.js · ws</span>
+      </div>
+
+      <div class="card card-green">
+        <span class="card-icon">🗺️</span>
+        <div class="card-name">Session Store</div>
+        <div class="card-desc">
+          In-memory map:<br>
+          <code style="color:#86efac;font-size:10px">sessionId → { ws, processInstanceKey, state }</code><br><br>
+          Routes WS messages to Camunda and routes job worker output back to the correct browser.
+        </div>
+        <span class="card-tag tag-green">In-memory / Redis</span>
+      </div>
+
+      <div class="card card-green">
+        <span class="card-icon">🔗</span>
+        <div class="card-name">Internal HTTP Endpoint</div>
+        <div class="card-desc">
+          <code style="color:#86efac;font-size:10px">POST /send</code><br>
+          Called by the <em>send-to-ui</em> job worker to push payloads to the correct WebSocket connection.
+        </div>
+        <span class="card-tag tag-green">Express · Port 3001</span>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- CONNECTOR: REST + Zeebe split -->
+  <div style="display:flex; gap:40px; justify-content:center; margin:-4px 0; position:relative; z-index:5;">
+    <div class="connector conn-rest" style="width:260px">
+      <div class="connector-line"></div>
+      <div class="connector-label">REST · createProcessInstance / publishMessage</div>
+      <div class="connector-line"></div>
+      <div class="connector-arrow"></div>
+    </div>
+    <div class="connector conn-http" style="width:220px">
+      <div class="connector-line"></div>
+      <div class="connector-label">HTTP POST /send  (internal)</div>
+      <div class="connector-line"></div>
+      <div class="connector-arrow" style="border-top-color:#22c55e; border-bottom:none; transform:rotate(180deg); margin-bottom:0; margin-top:0;"></div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       LAYER 3 — CAMUNDA 8
+  ═══════════════════════════════════════════════════════════ -->
+  <div class="zone zone-camunda">
+    <div class="zone-label zone-label-camunda">Camunda 8 Cloud  <span style="font-weight:400;opacity:0.6">· Zeebe Process Engine · 8.8+</span></div>
+    <div class="row" style="align-items:flex-start">
+
+      <div class="card card-purple" style="flex:0 0 160px">
+        <span class="card-icon">⚙️</span>
+        <div class="card-name">Process Engine</div>
+        <div class="card-desc">Manages durable process instances. Handles job queues, timers, message correlation.</div>
+        <span class="card-tag tag-purple">Zeebe gRPC</span>
+      </div>
+
+      <!-- BPMN Sub-zone -->
+      <div class="subzone">
+        <div class="subzone-label">pension-configurator.bpmn</div>
+        <div class="row" style="gap:10px; align-items:stretch">
+
+          <div class="card card-pink" style="flex:0 0 120px; min-width:0">
+            <span class="card-icon" style="font-size:16px">▶</span>
+            <div class="card-name" style="font-size:12px">Start Event</div>
+            <div class="card-desc" style="font-size:10px">Triggered by createProcessInstance with product + sessionId</div>
+          </div>
+
+          <div style="display:flex;align-items:center;color:#6b7280;font-size:18px">→</div>
+
+          <div class="card card-pink" style="flex:0 0 110px; min-width:0">
+            <span class="card-icon" style="font-size:16px">📝</span>
+            <div class="card-name" style="font-size:12px">Init Task</div>
+            <div class="card-desc" style="font-size:10px">Set product defaults, bind sessionId</div>
+          </div>
+
+          <div style="display:flex;align-items:center;color:#6b7280;font-size:18px">→</div>
+
+          <!-- Ad-hoc sub-process -->
+          <div style="flex:1;border:1px dashed #9333ea55;border-radius:8px;padding:10px;background:#1a0a2e;min-width:240px">
+            <div style="font-size:9px;color:#a78bfa;font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">Ad-hoc Sub-process</div>
+
+            <div class="card card-purple" style="margin-bottom:8px">
+              <span class="card-icon" style="font-size:16px">🤖</span>
+              <div class="card-name" style="font-size:12px">AI Agent Connector</div>
+              <div class="card-desc" style="font-size:10px">
+                Element template: <code style="color:#d8b4fe">agenticai-aiagent-job-worker</code><br>
+                Provider: AWS Bedrock · Claude 3.5 Sonnet<br>
+                Memory: in-process · 40 msg window<br>
+                Max LLM calls: 10
+              </div>
+            </div>
+
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              <div class="card card-orange" style="flex:1;min-width:80px;padding:8px">
+                <span class="card-icon" style="font-size:14px">📤</span>
+                <div class="card-name" style="font-size:11px">send-to-ui</div>
+                <div class="card-desc" style="font-size:10px">Tool</div>
+              </div>
+              <div class="card card-orange" style="flex:1;min-width:80px;padding:8px">
+                <span class="card-icon" style="font-size:14px">📊</span>
+                <div class="card-name" style="font-size:11px">run-simulation</div>
+                <div class="card-desc" style="font-size:10px">Tool</div>
+              </div>
+              <div class="card card-orange" style="flex:1;min-width:80px;padding:8px">
+                <span class="card-icon" style="font-size:14px">🔍</span>
+                <div class="card-name" style="font-size:11px">search-kb</div>
+                <div class="card-desc" style="font-size:10px">Tool</div>
+              </div>
+            </div>
+
+            <div style="margin-top:8px;border:1px solid #7c3aed44;border-radius:6px;padding:6px 8px;background:#1e103a;font-size:10px;color:#a78bfa">
+              ✉️ <strong>Message Receive Event</strong><br>
+              <span style="color:#7c3aed">name:</span> <code style="color:#d8b4fe">user_input_received</code><br>
+              <span style="color:#7c3aed">correlationKey:</span> <code style="color:#d8b4fe">=processInstanceKey</code>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- CONNECTOR: Zeebe job polling -->
+  <div class="connector conn-zeebe" style="width:300px; margin:-4px auto;">
+    <div class="connector-line"></div>
+    <div class="connector-label">Zeebe gRPC · job poll / complete</div>
+    <div class="connector-line"></div>
+    <div class="connector-arrow"></div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       LAYER 4 — JOB WORKERS
+  ═══════════════════════════════════════════════════════════ -->
+  <div class="zone zone-workers">
+    <div class="zone-label zone-label-workers">Job Workers  <span style="font-weight:400;opacity:0.6">· Python · PyZeebe 4.4</span></div>
+    <div class="row">
+
+      <div class="card card-red">
+        <span class="card-icon">📤</span>
+        <div class="card-name">send-to-ui Worker</div>
+        <div class="card-desc">
+          Receives <code style="color:#fca5a5">toolCall.messageType</code> + <code style="color:#fca5a5">toolCall.content</code>.<br>
+          Calls broker <code>POST /send</code> with processInstanceKey.<br>
+          Completes job immediately — no blocking.
+        </div>
+        <span class="card-tag" style="background:#7f1d1d;color:#fca5a5">type: send-to-ui</span>
+      </div>
+
+      <div class="card card-red">
+        <span class="card-icon">📊</span>
+        <div class="card-name">run-simulation Worker</div>
+        <div class="card-desc">
+          Receives profile fields from <code style="color:#fca5a5">toolCall</code>.<br>
+          Calls Calculator API <code>POST /simulate</code>.<br>
+          Returns simulation result JSON as <code style="color:#fca5a5">toolCallResult</code>.
+        </div>
+        <span class="card-tag" style="background:#7f1d1d;color:#fca5a5">type: run-simulation</span>
+      </div>
+
+      <div class="card card-red">
+        <span class="card-icon">🔍</span>
+        <div class="card-name">search-kb Worker</div>
+        <div class="card-desc">
+          Receives <code style="color:#fca5a5">toolCall.query</code>.<br>
+          Calls Bedrock <code>retrieve_and_generate()</code>.<br>
+          Returns answer text as <code style="color:#fca5a5">toolCallResult</code>.
+        </div>
+        <span class="card-tag" style="background:#7f1d1d;color:#fca5a5">type: search-kb</span>
+      </div>
+
+      <div class="card card-red">
+        <span class="card-icon">🔧</span>
+        <div class="card-name">init-session Worker</div>
+        <div class="card-desc">
+          Loads product defaults from Calculator API.<br>
+          Sets initial process variables (contribution, risk profile, coverage flags).
+        </div>
+        <span class="card-tag" style="background:#7f1d1d;color:#fca5a5">type: init-session</span>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- CONNECTOR: External HTTP -->
+  <div class="connector conn-http" style="width:300px; margin:-4px auto;">
+    <div class="connector-line"></div>
+    <div class="connector-label">HTTP calls to external services</div>
+    <div class="connector-line"></div>
+    <div class="connector-arrow"></div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       LAYER 5 — EXTERNAL SERVICES
+  ═══════════════════════════════════════════════════════════ -->
+  <div class="zone zone-external">
+    <div class="zone-label" style="color:#94a3b8;font-size:10px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;margin-bottom:16px">External Services</div>
+    <div class="row">
+
+      <div class="card card-amber">
+        <span class="card-icon">🧠</span>
+        <div class="card-name">AWS Bedrock</div>
+        <div class="card-desc">
+          LLM provider for the AI Agent Connector.<br>
+          Model: <code style="color:#fcd34d">anthropic.claude-3-5-sonnet-20241022-v2:0</code><br>
+          Region: eu-west-1
+        </div>
+        <span class="card-tag tag-amber">Claude 3.5 Sonnet</span>
+      </div>
+
+      <div class="card card-teal">
+        <span class="card-icon">🧮</span>
+        <div class="card-name">Calculator API</div>
+        <div class="card-desc">
+          FastAPI service — no changes needed.<br>
+          <code style="color:#5eead4">POST /simulate</code> · pension projection<br>
+          <code style="color:#5eead4">POST /eligibility</code> · coverage rules<br>
+          <code style="color:#5eead4">GET /products/{code}/defaults</code>
+        </div>
+        <span class="card-tag tag-teal">FastAPI · Port 8001</span>
+      </div>
+
+      <div class="card card-gray">
+        <span class="card-icon">📚</span>
+        <div class="card-name">Bedrock Knowledge Base</div>
+        <div class="card-desc">
+          Danica product documentation, policy information, coverage details.<br>
+          Hybrid search (semantic + keyword).<br>
+          Queried via <code style="color:#94a3b8">retrieve_and_generate()</code>.
+        </div>
+        <span class="card-tag tag-gray">AWS Bedrock KB</span>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       LEGEND
+  ═══════════════════════════════════════════════════════════ -->
+  <div class="legend">
+    <div class="legend-item">
+      <div class="legend-line" style="background:#6366f1"></div>
+      WebSocket (bidirectional)
+    </div>
+    <div class="legend-item">
+      <div class="legend-line" style="background:#f59e0b"></div>
+      Camunda REST API
+    </div>
+    <div class="legend-item">
+      <div class="legend-line" style="background:#a855f7"></div>
+      Zeebe gRPC (job workers)
+    </div>
+    <div class="legend-item">
+      <div class="legend-line" style="background:#22c55e"></div>
+      Internal HTTP
+    </div>
+    <div class="legend-item" style="margin-left:auto">
+      <span style="font-size:10px;color:#475569">Camunda 8.8+ · AWS Bedrock eu-west-1 · June 2026</span>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════
+       KEY DESIGN NOTES
+  ═══════════════════════════════════════════════════════════ -->
+  <div class="notes">
+
+    <div class="note" style="border-color:#6366f1">
+      <strong>WebSocket over polling</strong>
+      Replaces 2-second REST polling. Push delivery eliminates latency and unnecessary load. Bidirectional — UI both receives agent messages and sends user replies over the same connection.
+    </div>
+
+    <div class="note" style="border-color:#a855f7">
+      <strong>AI Agent Connector (job worker variant)</strong>
+      The <code>agenticai-aiagent-job-worker</code> element template handles the LLM → tool-call → result → LLM loop natively inside Zeebe. Replaces ~300 lines of custom Python orchestration. <em>Job worker variant required</em> for non-interrupting event support.
+    </div>
+
+    <div class="note" style="border-color:#22c55e">
+      <strong>Session Broker as the message router</strong>
+      Single new component. Maps <code>sessionId → processInstanceKey</code>. Job workers call <code>POST /send</code> — no direct WebSocket knowledge. Decouples workers from transport.
+    </div>
+
+    <div class="note" style="border-color:#f59e0b">
+      <strong>Send-and-wait pattern</strong>
+      <em>send-to-ui</em> worker pushes message and completes job immediately. BPMN advances to a non-interrupting Message Receive Event. User reply arrives via WebSocket → Broker calls <code>publishMessage()</code> → Zeebe correlates → agent loop resumes with new user input.
+    </div>
+
+    <div class="note" style="border-color:#ef4444">
+      <strong>Workers are pure tool implementations</strong>
+      No LLM logic in workers. <code>prompts.py</code> and <code>invoke_llm()</code> deleted. Workers only execute tool actions and return results via <code>toolCallResult</code>. Simpler, easier to test independently.
+    </div>
+
+    <div class="note" style="border-color:#14b8a6">
+      <strong>Calculator API unchanged</strong>
+      <code>api/</code> service requires zero modifications. All pension math, eligibility rules, and product defaults remain as-is.
+    </div>
+
+  </div>
+
+</div>
+</body>
+</html>

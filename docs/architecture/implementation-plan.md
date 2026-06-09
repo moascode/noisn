@@ -4,7 +4,15 @@
 
 Migration from the existing REST-polling + custom Python LLM orchestration to the WebSocket + Camunda AI Agent Connector architecture. The plan is structured in five phases that can each be delivered and tested independently.
 
-**Total estimated effort:** 8–12 days for a single developer familiar with the codebase.
+**Fundamental design shift:** The system is no longer a *configurator* (customer picks a product, tweaks parameters). It is now a *recommender*: the agent collects a full customer profile and existing pension information through conversation, then recommends the best-suited Danica product. The live report builds progressively in three sections:
+
+1. **Customer Profile** — intake answers (demographics, income, goals, risk tolerance) updated in real-time as the conversation progresses
+2. **Existing Coverage** — current pension situation (employer plan, state pension, existing savings) collected during intake
+3. **Recommended Product** — the Danica product best suited to this customer, with a simulation projection and explanation
+
+The customer no longer selects a product before the session starts.
+
+**Total estimated effort:** 9–13 days for a single developer familiar with the codebase.
 
 ---
 
@@ -59,7 +67,7 @@ WebSocket handler using `spring-websocket`:
 
 ```java
 // On connection: assign sessionId (UUID), register in SessionStore
-// On start_session frame: call CamundaClient.createProcessInstance → store PIK in SessionStore
+// On start_session frame: call CamundaClient.createProcessInstance (no product variable) → store PIK in SessionStore
 // On user_message frame: call CamundaClient.publishMessage(user_input_received, PIK, vars)
 // On resume_session frame: re-associate WebSocketSession with existing PIK
 // On close: mark session disconnected (do NOT delete — Camunda process still alive)
@@ -132,20 +140,28 @@ Open `bpmn/pension-configurator.bpmn` in Camunda Web Modeler and make these chan
 
 **Keep:**
 - Start Event
-- Init script task (update to set `sessionId` from process variable)
+- Init script task (update to initialise empty profile variables — no product variable at start)
 - Overall process flow structure
 - Error boundary events
 
 **Replace / Add:**
 1. **Remove** all individual service tasks for tool workers (`tool-ask-question`, `tool-store-answer`, `tool-assess-sufficiency`, etc.)
 2. **Remove** the intake and iterate sub-process definitions (they were custom orchestration)
-3. **Add** a single **ad-hoc sub-process** spanning the main agent interaction
-4. **Apply** the `agenticai-aiagent-job-worker` element template to this sub-process
-5. **Inside** the ad-hoc sub-process, add three service tasks:
+3. **Update init script task** to set initial process variables:
+   ```
+   customerProfile = {}        // filled progressively during intake
+   existingCoverage = {}       // employer pension, state pension, savings
+   recommendedProduct = null   // set by agent after assessment
+   simulationResult = null
+   ```
+4. **Add** a single **ad-hoc sub-process** spanning the main agent interaction
+5. **Apply** the `agenticai-aiagent-job-worker` element template to this sub-process
+6. **Inside** the ad-hoc sub-process, add four service tasks:
    - `send-to-ui` (task type: `send-to-ui`)
    - `run-simulation` (task type: `run-simulation`)
    - `search-kb` (task type: `search-kb`)
-6. **Add** a non-interrupting **Message Intermediate Catch Event** to the sub-process boundary:
+   - `update-profile` (task type: `update-profile`) — stores collected profile/coverage data as process variables
+7. **Add** a non-interrupting **Message Intermediate Catch Event** to the sub-process boundary:
    - Message name: `user_input_received`
    - Correlation key expression: `=processInstanceKey`
    - Output variable: `userMessage`
@@ -170,23 +186,49 @@ In the Web Modeler, configure the ad-hoc sub-process with the AI Agent Connector
 
 ### 2.4 Write the system prompt (FEEL expression)
 
-The system prompt must describe the agent's role and all available tools:
+The system prompt must describe the agent's recommender role and all available tools:
 
 ```
-"You are a pension advisor for Danica Pension. You help customers configure their pension plan through conversation.
+"You are a pension advisor for Danica Pension. Your goal is to understand the customer's full situation
+and recommend the Danica product that best fits their needs — not to configure a product they have already chosen.
 
 You have access to these tools:
-- send-to-ui: Send a message to the user. Use messageType 'question' to ask the user something, 'agent_message' for informational responses, 'summary' after running an initial simulation, and 'report' when delivering updated simulation data.
-- run-simulation: Run a pension projection. Provide the customer profile fields you have collected.
-- search-kb: Look up product information from the Danica knowledge base.
+- send-to-ui: Send a message or a live report update to the user interface.
+  Use messageType:
+    'question'         — ask the user one question
+    'agent_message'    — informational response (no question, no report update)
+    'profile_update'   — update the Profile section of the live report with collected data so far
+    'existing_update'  — update the Existing Coverage section of the live report
+    'recommendation'   — present the recommended product with explanation (before simulation)
+    'report'           — full live report update after simulation (all three sections)
+    'report_final'     — confirmed final report
+
+- update-profile: Persist collected profile or coverage data as process variables so the live report
+  can be restored on reconnect. Call this after each meaningful intake answer, not after every message.
+
+- run-simulation: Run a pension projection for a specific product and customer profile.
+  Always call this AFTER making a recommendation, using the recommended productCode.
+
+- search-kb: Look up Danica product details, eligibility rules, or coverage information.
 
 Workflow:
-1. Collect the customer's age, annual salary, desired retirement age, and monthly contribution through conversation.
-2. Once you have these, run a simulation and send a summary.
-3. Continue refining with the customer based on their feedback.
-4. When the customer confirms they are satisfied, send a report_final message.
+1. PROFILE COLLECTION — Ask about: age, annual gross salary, desired retirement age, family status,
+   number of dependants, monthly contribution capacity, risk tolerance (LOW/MEDIUM/HIGH), and
+   primary pension goal (income replacement / lump sum / flexibility).
+   After each answer, call update-profile and send a profile_update frame.
+2. EXISTING COVERAGE — Ask about: employer pension (provider, monthly contribution),
+   state pension estimate, any private savings or insurance.
+   Call update-profile and send an existing_update frame.
+3. PRODUCT RECOMMENDATION — Use search-kb to understand which Danica products match this profile.
+   Send a recommendation frame with the product name, key reasons, and trade-offs.
+4. SIMULATION — Call run-simulation with the recommended productCode and full profile.
+   Send a report frame with all three sections populated.
+5. EXPLORATION — Allow the customer to adjust contribution, retirement age, or risk profile
+   and re-run simulation. Send a report frame on each change.
+6. CONFIRMATION — When the customer confirms, send a report_final frame.
 
-Always ask one question at a time. Match the customer's language (Danish or English)."
+Always ask one question at a time. Match the customer's language (Danish or English).
+Never recommend a product before completing steps 1 and 2."
 ```
 
 ### 2.5 Tool schema declarations
@@ -197,14 +239,33 @@ For each tool task inside the sub-process, the connector needs to know the tool'
 ```json
 {
   "name": "send-to-ui",
-  "description": "Send a message to the user interface",
+  "description": "Send a message or live report update to the user interface",
   "parameters": {
     "type": "object",
     "properties": {
-      "messageType": {"type": "string", "enum": ["question","agent_message","summary","report","report_final"]},
-      "content": {"type": "object", "description": "Message payload"}
+      "messageType": {
+        "type": "string",
+        "enum": ["question","agent_message","profile_update","existing_update","recommendation","report","report_final"]
+      },
+      "content": {"type": "object", "description": "Message payload — structure depends on messageType (see system prompt)"}
     },
     "required": ["messageType", "content"]
+  }
+}
+```
+
+**update-profile schema:**
+```json
+{
+  "name": "update-profile",
+  "description": "Persist collected customer profile or existing coverage data as process variables",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "section": {"type": "string", "enum": ["customerProfile", "existingCoverage"]},
+      "fields": {"type": "object", "description": "Key-value pairs to merge into the named section"}
+    },
+    "required": ["section", "fields"]
   }
 }
 ```
@@ -213,10 +274,11 @@ For each tool task inside the sub-process, the connector needs to know the tool'
 ```json
 {
   "name": "run-simulation",
-  "description": "Run a pension projection simulation",
+  "description": "Run a pension projection for the recommended product and customer profile",
   "parameters": {
     "type": "object",
     "properties": {
+      "productCode": {"type": "string", "description": "Danica product code, e.g. DANICA_BALANCE, DANICA_LINK"},
       "age": {"type": "integer"},
       "annualSalary": {"type": "number"},
       "desiredRetirementAge": {"type": "integer"},
@@ -224,7 +286,7 @@ For each tool task inside the sub-process, the connector needs to know the tool'
       "riskProfile": {"type": "string", "enum": ["LOW","MEDIUM","HIGH"]},
       "payoutType": {"type": "string", "enum": ["LUMP_SUM","ANNUITY","LIFE_ANNUITY","COMBINED"]}
     },
-    "required": ["age", "annualSalary", "desiredRetirementAge", "monthlyContribution"]
+    "required": ["productCode", "age", "annualSalary", "desiredRetirementAge", "monthlyContribution"]
   }
 }
 ```
@@ -233,7 +295,7 @@ For each tool task inside the sub-process, the connector needs to know the tool'
 ```json
 {
   "name": "search-kb",
-  "description": "Search the Danica knowledge base for product or policy information",
+  "description": "Search the Danica knowledge base for product details, eligibility rules, or coverage information",
   "parameters": {
     "type": "object",
     "properties": {
@@ -265,6 +327,7 @@ workers/
 ├── src/main/java/com/danica/workers/
 │   ├── WorkersApplication.java           # Spring Boot entry point
 │   ├── SendToUiWorker.java               # @ZeebeWorker type=send-to-ui
+│   ├── UpdateProfileWorker.java          # @ZeebeWorker type=update-profile
 │   ├── RunSimulationWorker.java          # @ZeebeWorker type=run-simulation
 │   ├── SearchKbWorker.java               # @ZeebeWorker type=search-kb
 │   ├── client/
@@ -319,7 +382,35 @@ public class SendToUiWorker {
 
 **`BrokerClient.java`** calls `POST {BROKER_INTERNAL_URL}/internal/send` with `{ processInstanceKey, messageType, payload }`. Returns `"delivered"` on 200 or `"session_not_connected"` on 404.
 
-### 3.3 Implement `RunSimulationWorker.java`
+### 3.3 Implement `UpdateProfileWorker.java`
+
+This worker writes collected profile or coverage data back into Camunda process variables so the live report can be restored on reconnect and so the data persists across sub-process iterations.
+
+```java
+@Component
+public class UpdateProfileWorker {
+
+    @ZeebeWorker(type = "update-profile", timeout = "PT5S")
+    public void handle(JobClient client, ActivatedJob job) {
+        Map<String, Object> toolCall = (Map<String, Object>) job.getVariablesAsMap().get("toolCall");
+        String section = (String) toolCall.get("section");            // "customerProfile" or "existingCoverage"
+        Map<String, Object> fields = (Map<String, Object>) toolCall.get("fields");
+
+        // Merge incoming fields into the existing section map
+        Map<String, Object> existing = (Map<String, Object>) job.getVariablesAsMap()
+            .getOrDefault(section, new HashMap<>());
+        existing.putAll(fields);
+
+        client.newCompleteCommand(job)
+            .variable(section, existing)
+            .variable("toolCallResult", "updated")
+            .send()
+            .join();
+    }
+}
+```
+
+### 3.4 Implement `RunSimulationWorker.java`
 
 ```java
 @Component
@@ -332,6 +423,7 @@ public class RunSimulationWorker {
         Map<String, Object> toolCall = (Map<String, Object>) job.getVariablesAsMap().get("toolCall");
 
         SimulationRequest request = SimulationRequest.builder()
+            .productCode((String) toolCall.get("productCode"))        // required — agent sets after recommendation
             .age((Integer) toolCall.get("age"))
             .annualSalary(((Number) toolCall.get("annualSalary")).doubleValue())
             .desiredRetirementAge((Integer) toolCall.get("desiredRetirementAge"))
@@ -344,13 +436,15 @@ public class RunSimulationWorker {
 
         client.newCompleteCommand(job)
             .variable("toolCallResult", result.toJson())
+            .variable("simulationResult", result)           // also persist for reconnect
+            .variable("recommendedProduct", request.getProductCode())
             .send()
             .join();
     }
 }
 ```
 
-### 3.4 Implement `SearchKbWorker.java`
+### 3.5 Implement `SearchKbWorker.java`
 
 ```java
 @Component
@@ -375,7 +469,7 @@ public class SearchKbWorker {
 
 **`BedrockKbClient.java`** uses the AWS SDK Java v2 `BedrockAgentRuntimeClient` to call `retrieve_and_generate` with the configured Knowledge Base ID.
 
-### 3.5 Add environment variables (`application.yml`)
+### 3.6 Add environment variables (`application.yml`)
 
 ```yaml
 camunda:
@@ -397,7 +491,7 @@ aws:
   bedrock-kb-id: ${BEDROCK_KB_ID}
 ```
 
-### 3.6 Delete obsolete files
+### 3.7 Delete obsolete files
 
 If migrating from an existing Python workers module:
 - Remove `workers/prompts.py` — all prompts now live in the BPMN element template
@@ -463,6 +557,11 @@ Add:
 - `useSessionSocket` hook
 - Message dispatcher that routes incoming WS frames to UI state:
 
+The live report panel has **three sections** that update independently:
+- **Profile** — customer demographics, income, goals, risk tolerance
+- **Existing Coverage** — employer pension, state pension, private savings
+- **Recommended Product** — product name + rationale + simulation
+
 ```javascript
 function handleMessage(frame) {
   switch (frame.type) {
@@ -472,16 +571,29 @@ function handleMessage(frame) {
     case 'agent_message':
       setMessages(m => [...m, { role: 'agent', content: frame.content }]);
       break;
-    case 'summary':
-      setSummary(frame.content);
+    case 'profile_update':
+      // Progressive update: merge new fields into the profile panel
+      setProfile(p => ({ ...p, ...frame.content }));
+      break;
+    case 'existing_update':
+      // Progressive update: merge new fields into the existing coverage panel
+      setExistingCoverage(p => ({ ...p, ...frame.content }));
+      break;
+    case 'recommendation':
+      // Show recommended product card (before simulation runs)
+      setRecommendation(frame.content);   // { productCode, productName, reasons, tradeoffs }
       setMessages(m => [...m, { role: 'agent', content: frame.content.explanation }]);
       break;
     case 'report':
-      setReport(frame.content.simulationResult);
+      // Full report update: all three sections populated after simulation
+      setProfile(frame.content.customerProfile);
+      setExistingCoverage(frame.content.existingCoverage);
+      setRecommendation(frame.content.recommendation);
+      setSimulationResult(frame.content.simulationResult);
       setMessages(m => [...m, { role: 'agent', content: frame.content.explanation }]);
       break;
     case 'report_final':
-      setReport(frame.content.configuration);
+      setSimulationResult(frame.content.simulationResult);
       setSessionComplete(true);
       break;
     case 'error':
@@ -489,6 +601,14 @@ function handleMessage(frame) {
       break;
   }
 }
+```
+
+**State shape:**
+```javascript
+const [profile, setProfile]                   = useState({});   // age, salary, retirementAge, riskProfile, ...
+const [existingCoverage, setExistingCoverage] = useState({});   // employerPension, statePension, savings, ...
+const [recommendation, setRecommendation]     = useState(null); // productCode, productName, reasons, tradeoffs
+const [simulationResult, setSimulationResult] = useState(null); // projectedPension, salaryReplacement, ...
 ```
 
 ### 4.3 Update environment variables
@@ -548,16 +668,18 @@ services:
 
 ### 5.2 End-to-end test scenarios
 
-**Happy path — full session:**
-1. Connect WebSocket, receive `session_ready`
-2. Receive first question from agent
-3. Answer 5-6 intake questions
-4. Verify `run-simulation` is called with correct parameters
-5. Verify `summary` frame received with correct structure
-6. Send parameter change message
-7. Verify updated `report` frame received
-8. Confirm session
-9. Verify `report_final` frame and `session_complete`
+**Happy path — full recommender session:**
+1. Connect WebSocket (no product pre-selection), receive `session_ready`
+2. Receive first question from agent (age, salary, retirement goal, etc.)
+3. Answer ~5 profile questions — verify `profile_update` frames update the Profile panel progressively
+4. Answer ~3 existing coverage questions — verify `existing_update` frames update the Coverage panel
+5. Verify agent calls `search-kb` to query product catalog before recommending
+6. Verify `recommendation` frame received with `productCode`, `productName`, `reasons`
+7. Verify `run-simulation` is called with the recommended `productCode`
+8. Verify `report` frame received with all three sections (profile, existing, recommendation+simulation)
+9. Send parameter change ("what if I contribute 500 more per month")
+10. Verify updated `report` frame with new simulation numbers
+11. Confirm session → verify `report_final` frame and `session_complete`
 
 **Reconnection scenario:**
 1. Start session, receive first question
@@ -633,6 +755,9 @@ Phases 1, 2, and 3 can partially overlap. Phase 4 can start once Phase 1 is test
 | Session map lost on broker restart mid-session | Low | Medium | Implement Redis-backed session store for production; in-memory acceptable for demo |
 | LLM tool call schema mismatch (connector rejects tool call) | Medium | Medium | Validate schemas against connector expectations in Phase 2 smoke test |
 | CORS / auth between broker internal HTTP and workers | Low | Low | Both run in same network in production; add simple bearer token for broker `/send` |
+| Agent recommends product before collecting full profile | Medium | High | Enforce in system prompt: explicit ordering constraint (steps 1→2→3); test with short-cut user answers |
+| Calculator API rejects unknown `productCode` | Medium | Medium | Validate productCode enum server-side; return 400 with message so worker returns error toolCallResult |
+| Connector hits 10 LLM call limit before recommendation is made (long intake) | Medium | Medium | Profile + coverage collection spans two sub-process entries if needed; increase max model calls to 15 for intake sub-process |
 
 ---
 
@@ -641,9 +766,9 @@ Phases 1, 2, and 3 can partially overlap. Phase 4 can start once Phase 1 is test
 | File | Action | Notes |
 |------|--------|-------|
 | `broker/` | Create | Spring Boot WebSocket server + session store |
-| `workers/` | Create | Spring Boot @ZeebeWorker project (send-to-ui, run-simulation, search-kb) |
-| `api/` | Create/Update | Spring Boot Calculator API (Spring MVC, stateless REST) |
-| `bpmn/pension-configurator.bpmn` | Rewrite | AI Agent Connector, 3 tool tasks, message events |
+| `workers/` | Create | Spring Boot @ZeebeWorker project (send-to-ui, update-profile, run-simulation, search-kb) |
+| `api/` | Create/Update | Spring Boot Calculator API — `/simulate` must accept `productCode`; no longer optional |
+| `bpmn/pension-configurator.bpmn` | Rewrite | AI Agent Connector, 4 tool tasks (incl. update-profile), message events |
 | `bpmn/pension-configurator-v1.bpmn` | Create | Backup of existing |
 | `ui/src/hooks/useSessionSocket.js` | Create | WebSocket hook |
 | `ui/src/App.jsx` | Edit | Remove polling, add WS hook and message dispatcher |

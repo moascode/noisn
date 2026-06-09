@@ -1,0 +1,61 @@
+services:
+
+  broker:
+    build:
+      context: ./broker
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3001"
+    environment:
+      - CAMUNDA_REST_URL=${CAMUNDA_REST_URL}
+      - CAMUNDA_REST_TOKEN=${CAMUNDA_REST_TOKEN}
+      - PROCESS_DEFINITION_KEY=${PROCESS_DEFINITION_KEY:-pension-configurator}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  workers:
+    build:
+      context: ./workers-java
+      dockerfile: Dockerfile
+    depends_on:
+      broker:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    environment:
+      - ZEEBE_ADDRESS=${ZEEBE_ADDRESS}
+      - ZEEBE_CLIENT_ID=${ZEEBE_CLIENT_ID}
+      - ZEEBE_CLIENT_SECRET=${ZEEBE_CLIENT_SECRET}
+      - BROKER_INTERNAL_URL=http://broker:3001
+      - CALCULATOR_API_URL=http://api:8001
+      - AWS_REGION=${AWS_REGION:-eu-west-1}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - BEDROCK_KB_ID=${BEDROCK_KB_ID}
+
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ui:
+    build:
+      context: ./ui
+      dockerfile: Dockerfile
+    ports:
+      - "5173:80"
+    depends_on:
+      broker:
+        condition: service_healthy
+    environment:
+      - VITE_BROKER_WS_URL=ws://localhost:3001

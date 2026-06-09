@@ -1,156 +1,167 @@
 # Danica Pension Configurator
 
-Self-serve pension configurator — Camunda 8 + AWS Bedrock + Spring Boot.
+AI-powered pension recommender — Camunda 8 + AWS Bedrock + Spring Boot + React.
 
-Event-driven architecture: Camunda orchestrates BPMN process, Bedrock provides AI (Claude 3.5 Sonnet), Spring Boot implements calculator API, job workers, and WebSocket session broker.
+The system collects a full customer profile through conversation, recommends the best-suited Danica product, and presents a live simulation report — all orchestrated via the Camunda AI Agent Connector rather than custom LLM code.
 
 ## Project Structure
 
 ```
 noisn/
-├── bpmn/                  # Camunda BPMN process model
-│   └── pension-configurator.bpmn
-├── api/                   # Spring Boot calculator service (REST)
-│   ├── src/main/java/com/danica/calculator/
+├── bpmn/
+│   ├── pension-configurator.bpmn      # Active: AI Agent Connector recommender design
+│   └── pension-configurator-v1.bpmn   # Archived: previous polling/worker design
+├── broker/                            # Spring Boot WebSocket session broker
+│   ├── src/main/java/com/danica/broker/
 │   ├── pom.xml
-│   └── application.yml
-├── workers/               # Spring Boot Zeebe job workers
+│   └── Dockerfile
+├── workers-java/                      # Spring Boot Zeebe job workers
 │   ├── src/main/java/com/danica/workers/
 │   ├── pom.xml
-│   └── application.yml
-├── ui/                    # React frontend
+│   └── Dockerfile
+├── api/                               # FastAPI calculator service (Python)
+│   ├── main.py
+│   ├── calculators.py
+│   └── Dockerfile
+├── ui/                                # React frontend (Vite)
 │   ├── src/
+│   │   ├── App.jsx
+│   │   └── hooks/useSessionSocket.js
 │   ├── package.json
-│   └── vite.config.js
-└── docs/                  # Architecture documentation
-    ├── architecture.html  # Visual architecture diagram (open in browser)
-    └── danica-solution-design-v2.jsx  # Detailed design reference
-
+│   └── Dockerfile
+├── docker-compose.yml
+├── .env.example
+└── docs/architecture/                 # Architecture docs and implementation plan
 ```
 
-## Tech Stack
+## Architecture
 
-- **Orchestration:** Camunda 8 (Zeebe) — BPMN process engine, process variables, gRPC job distribution
-- **AI/LLM:** AWS Bedrock (Claude 3.5 Sonnet) — called directly by Camunda AI Agent Connector
-- **Backend:** Spring Boot 3.x with Camunda Zeebe Spring Boot Starter
-  - `api/` — Spring MVC calculator service
-  - `workers/` — @ZeebeWorker job implementations
-  - WebSocket broker for real-time UI updates (spring-websocket + STOMP)
-- **Frontend:** React 18 + Vite
-- **Knowledge Base:** Bedrock Knowledge Base (vector-indexed product docs, hybrid search)
+```
+React UI ←→ WebSocket ←→ Session Broker ←→ Camunda (BPMN + AI Agent Connector)
+                                                         ↕                   ↕
+                                                  Job Workers          AWS Bedrock
+                                               (send-to-ui,           (Claude 3.5
+                                                update-profile,         Sonnet +
+                                                run-simulation,         KB)
+                                                search-kb)
+                                                    ↕
+                                             Calculator API
+```
+
+**Key design shift:** The system is a *recommender* (agent collects full customer profile → recommends best Danica product) rather than a *configurator* (customer picks product first). The live report builds progressively in three sections: Customer Profile, Existing Coverage, and Recommended Product.
 
 ## Quick Start
 
-### 1. Prerequisites
+### Prerequisites
 
-- Java 17+ and Maven (for Spring Boot)
-- Node.js 18+ and npm (for React UI)
-- Camunda 8 Cloud cluster (SaaS) or self-hosted
-- AWS account with Bedrock access (Claude 3.5 Sonnet model + Knowledge Base)
+- Java 17+ and Maven
+- Node.js 18+ and npm
+- Python 3.11+ (for calculator API)
+- Camunda 8 Cloud cluster (8.8+)
+- AWS account with Bedrock access (Claude 3.5 Sonnet + Knowledge Base)
+
+### 1. Set up environment variables
+
+```bash
+cp .env.example .env
+# Edit .env with your Camunda and AWS credentials
+```
 
 ### 2. Deploy the BPMN
 
-```bash
-# Via Camunda Web Modeler:
-# - Import bpmn/pension-configurator.bpmn
-# - Deploy to your cluster
-```
+Import `bpmn/pension-configurator.bpmn` into Camunda Web Modeler and deploy to your cluster.
 
-### 3. Build and Start Spring Boot Services
+### 3. Start all services with Docker Compose
 
 ```bash
-# Build calculator API
-cd api
-mvn clean package
-mvn spring-boot:run
-
-# In another terminal, build and start job workers
-cd workers
-mvn clean package
-mvn spring-boot:run
+docker-compose up --build
 ```
 
-Both services read from `.env` or `application.yml` (see Environment Variables below).
+Or start individually in this order: `api` → `workers-java` → `broker` → `ui`
 
-### 4. Start the React UI
+### 4. Manual startup (development)
 
 ```bash
-cd ui
-npm install
-npm run dev
+# Calculator API
+cd api && pip install -r requirements.txt && uvicorn main:app --port 8001
+
+# Job workers
+cd workers-java && mvn spring-boot:run
+
+# Session broker
+cd broker && mvn spring-boot:run
+
+# React UI
+cd ui && npm install && npm run dev
 ```
 
-UI will connect via WebSocket to Spring Boot broker (default: `ws://localhost:8080/ws`).
+Open `http://localhost:5173` — the UI connects automatically via WebSocket.
 
 ## Environment Variables
 
-Spring Boot services read from `.env` file or `application.yml`. Camunda credentials are required for both API and workers.
-
 | Variable | Service | Description |
 |---|---|---|
-| `ZEEBE_ADDRESS` | workers, api | Camunda Zeebe gRPC address (e.g., `your-cluster.zeebe.camunda.io:443`) |
-| `ZEEBE_CLIENT_ID` | workers, api | Camunda client ID |
-| `ZEEBE_CLIENT_SECRET` | workers, api | Camunda client secret |
-| `CAMUNDA_REST_URL` | api, workers | Camunda REST API base URL (e.g., `https://your-cluster.camunda.io/api`) |
-| `CAMUNDA_REST_TOKEN` | api, workers | Camunda REST API OAuth token |
-| `SPRING_WEBSOCKET_PORT` | api | WebSocket broker port (default: 8080) |
-| `CALCULATOR_API_URL` | workers | Internal calculator API URL (default: `http://localhost:8001`) |
+| `CAMUNDA_REST_URL` | broker | Camunda REST API base URL |
+| `CAMUNDA_REST_TOKEN` | broker | Bearer token for Camunda REST API |
+| `PROCESS_DEFINITION_KEY` | broker | BPMN process ID (default: `pension-configurator`) |
+| `ZEEBE_ADDRESS` | workers-java | Zeebe gRPC address |
+| `ZEEBE_CLIENT_ID` | workers-java | Camunda client ID |
+| `ZEEBE_CLIENT_SECRET` | workers-java | Camunda client secret |
+| `BROKER_INTERNAL_URL` | workers-java | Session Broker internal URL (default: `http://localhost:3001`) |
+| `CALCULATOR_API_URL` | workers-java | Calculator API URL (default: `http://localhost:8001`) |
+| `AWS_REGION` | workers-java | AWS region for Bedrock (default: `eu-west-1`) |
+| `AWS_ACCESS_KEY_ID` | workers-java | AWS credentials |
+| `AWS_SECRET_ACCESS_KEY` | workers-java | AWS credentials |
+| `BEDROCK_KB_ID` | workers-java | Bedrock Knowledge Base ID |
+| `VITE_BROKER_WS_URL` | ui | WebSocket URL (default: `ws://localhost:3001`) |
 
-**AWS/Bedrock credentials:** Configured in Camunda as connector properties (not in Spring Boot).
-- `AWS_REGION` — where Bedrock cluster operates
-- `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` — IAM role for Camunda connector only
-- `BEDROCK_MODEL_ID` — Claude model ID (e.g., `anthropic.claude-3-5-sonnet-20241022-v2:0`)
-- `BEDROCK_KB_ID` — Knowledge Base ID
+AWS credentials for the **AI Agent Connector** (LLM calls) are configured as Camunda secrets, not in Spring Boot.
 
-## Architecture Overview
+## Services
 
-**Layers:**
-1. **Presentation:** React UI with WebSocket client (STOMP protocol)
-2. **Session Broker:** Spring Boot WebSocket broker routes messages between UI and Camunda
-3. **Orchestration:** Camunda 8 BPMN process (pension-configurator.bpmn)
-   - AI Agent Connector (element template) calls Bedrock directly
-   - Manages all session state as process variables
-4. **Workers:** Spring Boot @ZeebeWorker implementations (ask-question, store-answer, run-simulation, etc.)
-5. **Calculator:** Spring Boot REST API (/simulate, /eligibility, /products/{code}/defaults)
-6. **LLM & Knowledge:** AWS Bedrock Claude + Knowledge Base (called by Camunda, not Spring Boot)
+### Session Broker (`broker/`, port 3001)
 
-**Data Flow:**
-- React sends user input → WebSocket → Spring Broker → Camunda REST API
-- Camunda job task created → Spring Worker subscribes via Zeebe gRPC → executes tool → writes results
-- Camunda AI Agent Sub-process → calls Bedrock directly → processes tool outcomes
-- Results written to process variables → pushed via WebSocket to React
+Spring Boot WebSocket server. Maps browser connections to Camunda process instances.
 
-For detailed architecture diagram, open `docs/architecture.html` in your browser.
+- **WebSocket** `/ws` — accepts `start_session`, `user_message`, `resume_session` frames
+- **HTTP** `POST /internal/send` — called by `send-to-ui` worker to push frames to the browser
 
-## Development
+### Job Workers (`workers-java/`)
 
-### Running Tests
+Four Zeebe `@JobWorker` beans — pure tool implementations, zero LLM logic:
+
+| Worker | Type | Action |
+|---|---|---|
+| `SendToUiWorker` | `send-to-ui` | POSTs frame to broker's `/internal/send` |
+| `UpdateProfileWorker` | `update-profile` | Merges profile/coverage fields into process variables |
+| `RunSimulationWorker` | `run-simulation` | Calls Calculator API `/simulate` |
+| `SearchKbWorker` | `search-kb` | Queries Bedrock Knowledge Base |
+
+### Calculator API (`api/`, port 8001)
+
+Python FastAPI service. Endpoints: `POST /simulate`, `POST /eligibility`, `GET /products/{code}/defaults`.
+
+### React UI (`ui/`, port 5173 dev / 80 container)
+
+WebSocket client using `useSessionSocket` hook. Live report panel with three progressive sections:
+- **Customer Profile** — populated via `profile_update` frames
+- **Existing Coverage** — populated via `existing_update` frames  
+- **Recommended Product** — populated via `recommendation` and `report` frames
+
+## Running Tests
 
 ```bash
-# Spring Boot services
-mvn test
+# Broker integration tests
+cd broker && mvn test
 
-# React UI
-npm test
+# Workers unit tests
+cd workers-java && mvn test
 ```
 
-### Code Structure
+## Observability
 
-- `api/src/main/java/com/danica/calculator/` — Calculator logic, eligibility rules
-- `workers/src/main/java/com/danica/workers/` — Zeebe worker implementations (@ZeebeWorker beans)
-- `ui/src/` — React components (chat, report, gauge, etc.)
+- **Camunda Operate** — view running process instances, `agentContext.metrics` (token counts)
+- **Broker logs** — structured per-session events (`sessionId`, `processInstanceKey`)
+- **Spring Actuator** — `http://localhost:3001/actuator/health`
 
-### Debugging
-
-- **Camunda Operate:** https://your-cluster.camunda.io/operate — view running process instances and variables
-- **Spring logs:** Set `logging.level.com.danica=DEBUG` in application.yml
-- **React DevTools:** Browser React extension for component inspection
-
-## Deployment
-
-See `docs/danica-delivery-plan.jsx` for full go-live checklist including:
-- Auth integration (OAuth2 with Camunda)
-- PDF report generation
-- Monitoring and alerting
-- GDPR compliance (right-to-erasure, audit trails)
-- Load testing and hardening
+For full architecture details, see `docs/architecture/architecture.md`.

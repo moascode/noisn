@@ -1,0 +1,11 @@
+camunda:
+  rest-url: ${CAMUNDA_REST_URL:https://example.camunda.io}
+  rest-token: ${CAMUNDA_REST_TOKEN:}
+  process-definition-key: ${PROCESS_DEFINITION_KEY:pension-configurator}
+
+server:
+  port: ${PORT:3001}
+
+logging:
+  level:
+    com.danica.broker: INFO

@@ -64,7 +64,13 @@ export AWS_REGION=eu-west-1
 export AWS_ACCESS_KEY_ID=your-key
 export AWS_SECRET_ACCESS_KEY=your-secret
 export BEDROCK_MODEL_ID=anthropic.claude-3-5-sonnet-20241022-v2:0
-export BEDROCK_KB_ID=your-knowledge-base-id
+export BEDROCK_EMBED_MODEL_ID=amazon.titan-embed-text-v2:0
+export OPENSEARCH_URL=https://your-opensearch-cluster:9200
+export OPENSEARCH_INDEX=pension-kb
+export OPENSEARCH_USERNAME=your-username       # omit if unauthenticated
+export OPENSEARCH_PASSWORD=your-password       # omit if unauthenticated
+export OPENSEARCH_VECTOR_FIELD=embedding       # k-NN field name in your index
+export OPENSEARCH_TEXT_FIELD=text              # text content field name
 export CALCULATOR_API_URL=http://localhost:8001
 
 python main.py
@@ -87,8 +93,14 @@ npm run dev
 | `AWS_REGION` | AWS region (eu-west-1) |
 | `AWS_ACCESS_KEY_ID` | AWS access key |
 | `AWS_SECRET_ACCESS_KEY` | AWS secret key |
-| `BEDROCK_MODEL_ID` | Bedrock model ID |
-| `BEDROCK_KB_ID` | Bedrock Knowledge Base ID |
+| `BEDROCK_MODEL_ID` | Bedrock model ID for Claude (Converse API) |
+| `BEDROCK_EMBED_MODEL_ID` | Bedrock embedding model (default: `amazon.titan-embed-text-v2:0`) |
+| `OPENSEARCH_URL` | Full URL of your OpenSearch cluster (e.g. `https://host:9200`) |
+| `OPENSEARCH_INDEX` | Index name containing pension KB documents |
+| `OPENSEARCH_USERNAME` | Basic auth username (omit for unauthenticated clusters) |
+| `OPENSEARCH_PASSWORD` | Basic auth password (omit for unauthenticated clusters) |
+| `OPENSEARCH_VECTOR_FIELD` | k-NN vector field name in the index (default: `embedding`) |
+| `OPENSEARCH_TEXT_FIELD` | Text content field name in the index (default: `text`) |
 | `CALCULATOR_API_URL` | Internal URL for calculator API |
 | `CAMUNDA_REST_URL` | Camunda REST API base URL |
 | `CAMUNDA_REST_TOKEN` | Camunda REST API OAuth token |

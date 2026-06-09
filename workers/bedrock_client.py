@@ -1,27 +1,63 @@
 """
 Shared AWS Bedrock client — used by all tool workers that call the LLM.
-Handles Converse API calls, Knowledge Base retrieval, and structured JSON extraction.
+Handles Converse API calls, OpenSearch vector retrieval, and structured JSON extraction.
 """
 
 import os
 import json
 import boto3
 import logging
+import requests
 from typing import Optional
+from requests.auth import HTTPBasicAuth
 
 logger = logging.getLogger(__name__)
 
 MODEL_ID = os.getenv("BEDROCK_MODEL_ID", "anthropic.claude-3-5-sonnet-20241022-v2:0")
-KB_ID = os.getenv("BEDROCK_KB_ID", "")
+EMBED_MODEL_ID = os.getenv("BEDROCK_EMBED_MODEL_ID", "amazon.titan-embed-text-v2:0")
 REGION = os.getenv("AWS_REGION", "eu-west-1")
+
+OPENSEARCH_URL = os.getenv("OPENSEARCH_URL", "")          # e.g. https://my-cluster:9200
+OPENSEARCH_INDEX = os.getenv("OPENSEARCH_INDEX", "pension-kb")
+OPENSEARCH_USERNAME = os.getenv("OPENSEARCH_USERNAME", "")
+OPENSEARCH_PASSWORD = os.getenv("OPENSEARCH_PASSWORD", "")
+OPENSEARCH_VECTOR_FIELD = os.getenv("OPENSEARCH_VECTOR_FIELD", "embedding")
+OPENSEARCH_TEXT_FIELD = os.getenv("OPENSEARCH_TEXT_FIELD", "text")
 
 
 def get_bedrock_client():
     return boto3.client("bedrock-runtime", region_name=REGION)
 
 
-def get_bedrock_agent_client():
-    return boto3.client("bedrock-agent-runtime", region_name=REGION)
+def _embed(text: str) -> list[float]:
+    client = get_bedrock_client()
+    response = client.invoke_model(
+        modelId=EMBED_MODEL_ID,
+        body=json.dumps({"inputText": text}),
+        contentType="application/json",
+        accept="application/json",
+    )
+    return json.loads(response["body"].read())["embedding"]
+
+
+def _opensearch_request(method: str, path: str, body: dict) -> dict:
+    url = f"{OPENSEARCH_URL.rstrip('/')}/{path}"
+    auth = (
+        HTTPBasicAuth(OPENSEARCH_USERNAME, OPENSEARCH_PASSWORD)
+        if OPENSEARCH_USERNAME
+        else None
+    )
+    response = requests.request(
+        method,
+        url,
+        json=body,
+        auth=auth,
+        headers={"Content-Type": "application/json"},
+        timeout=10,
+        verify=True,
+    )
+    response.raise_for_status()
+    return response.json()
 
 
 def invoke_llm(
@@ -73,7 +109,6 @@ def invoke_llm_json(
         temperature=temperature,
         max_tokens=max_tokens,
     )
-    # Strip markdown fences if model added them
     cleaned = raw.strip()
     if cleaned.startswith("```"):
         cleaned = cleaned.split("```")[1]
@@ -85,28 +120,61 @@ def invoke_llm_json(
 
 def query_knowledge_base(query: str, n_results: int = 5) -> str:
     """
-    Query Bedrock Knowledge Base using RetrieveAndGenerate.
-    Returns a grounded answer based on KB content.
+    Retrieve-and-generate against a self-managed OpenSearch cluster.
+
+    Steps:
+      1. Embed the query via Bedrock embedding model.
+      2. k-NN vector search against the OpenSearch index.
+      3. Synthesise a grounded answer via Claude using the retrieved chunks.
     """
-    if not KB_ID:
-        logger.warning("BEDROCK_KB_ID not set — returning placeholder KB response")
+    if not OPENSEARCH_URL:
+        logger.warning("OPENSEARCH_URL not set — returning placeholder KB response")
         return f"[KB not configured] Query: {query}"
 
-    client = get_bedrock_agent_client()
-    response = client.retrieve_and_generate(
-        input={"text": query},
-        retrieveAndGenerateConfiguration={
-            "type": "KNOWLEDGE_BASE",
-            "knowledgeBaseConfiguration": {
-                "knowledgeBaseId": KB_ID,
-                "modelArn": f"arn:aws:bedrock:{REGION}::foundation-model/{MODEL_ID}",
-                "retrievalConfiguration": {
-                    "vectorSearchConfiguration": {
-                        "numberOfResults": n_results,
-                        "overrideSearchType": "HYBRID",
-                    }
-                },
-            },
+    # 1. Embed
+    try:
+        vector = _embed(query)
+    except Exception as e:
+        logger.error(f"Embedding failed: {e}")
+        return f"[Embedding error] {e}"
+
+    # 2. k-NN search
+    search_body = {
+        "size": n_results,
+        "query": {
+            "knn": {
+                OPENSEARCH_VECTOR_FIELD: {
+                    "vector": vector,
+                    "k": n_results,
+                }
+            }
         },
+        "_source": [OPENSEARCH_TEXT_FIELD, "title", "source"],
+    }
+
+    try:
+        result = _opensearch_request(
+            "POST",
+            f"{OPENSEARCH_INDEX}/_search",
+            search_body,
+        )
+    except Exception as e:
+        logger.error(f"OpenSearch query failed: {e}")
+        return f"[OpenSearch error] {e}"
+
+    hits = result.get("hits", {}).get("hits", [])
+    if not hits:
+        return "No relevant product information found for your query."
+
+    # 3. Synthesise answer with Claude
+    chunks = "\n\n---\n\n".join(
+        hit["_source"].get(OPENSEARCH_TEXT_FIELD, "") for hit in hits
     )
-    return response["output"]["text"]
+    system = (
+        "You are a Danica Pension product expert. "
+        "Answer the user's question using ONLY the provided knowledge base excerpts. "
+        "Be concise and cite the source where relevant. "
+        "If the excerpts do not contain enough information, say so clearly."
+    )
+    user_message = f"QUESTION: {query}\n\nKNOWLEDGE BASE EXCERPTS:\n{chunks}"
+    return invoke_llm(system_prompt=system, user_message=user_message, temperature=0.1)

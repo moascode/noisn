@@ -58,9 +58,8 @@
          Ad-hoc sub-process with job-worker implementation
     ═══════════════════════════════════════════════════ -->
     <bpmn:adHocSubProcess id="SubProcess_Intake" name="AI Agent: Intake Conversation"
-                          ordering="Parallel" cancelRemainingInstances="false">
+                          ordering="Parallel">
       <bpmn:extensionElements>
-        <!-- AI Agent Sub-process connector template -->
         <zeebe:taskDefinition type="io.camunda:aws-bedrock-agent:1" />
         <zeebe:taskHeaders>
           <zeebe:header key="provider" value="BEDROCK" />
@@ -117,21 +116,21 @@
           <zeebe:taskDefinition type="tool-signal-complete" />
         </bpmn:extensionElements>
       </bpmn:serviceTask>
-
-      <!-- Timer boundary — max session inactivity -->
-      <bpmn:boundaryEvent id="BoundaryEvent_IntakeTimeout" attachedToRef="SubProcess_Intake" cancelActivity="true">
-        <bpmn:timerEventDefinition>
-          <bpmn:timeDuration>PT30M</bpmn:timeDuration>
-        </bpmn:timerEventDefinition>
-        <bpmn:outgoing>Flow_timeout_to_park</bpmn:outgoing>
-      </bpmn:boundaryEvent>
-
-      <!-- Error boundary -->
-      <bpmn:boundaryEvent id="BoundaryEvent_IntakeError" attachedToRef="SubProcess_Intake" cancelActivity="true">
-        <bpmn:errorEventDefinition errorRef="Error_AgentFailure" />
-        <bpmn:outgoing>Flow_error_to_fallback</bpmn:outgoing>
-      </bpmn:boundaryEvent>
     </bpmn:adHocSubProcess>
+
+    <!-- Timer boundary on intake sub-process (must be at process level, not inside subprocess) -->
+    <bpmn:boundaryEvent id="BoundaryEvent_IntakeTimeout" attachedToRef="SubProcess_Intake" cancelActivity="true">
+      <bpmn:timerEventDefinition>
+        <bpmn:timeDuration>PT30M</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+      <bpmn:outgoing>Flow_intake_timeout_to_park</bpmn:outgoing>
+    </bpmn:boundaryEvent>
+
+    <!-- Error boundary on intake sub-process -->
+    <bpmn:boundaryEvent id="BoundaryEvent_IntakeError" attachedToRef="SubProcess_Intake" cancelActivity="true">
+      <bpmn:errorEventDefinition errorRef="Error_AgentFailure" />
+      <bpmn:outgoing>Flow_error_to_fallback</bpmn:outgoing>
+    </bpmn:boundaryEvent>
 
     <!-- ═══════════════════════════════════════════════════
          GATEWAY: Sufficiency check
@@ -221,7 +220,7 @@
          AI AGENT SUB-PROCESS: ITERATE
     ═══════════════════════════════════════════════════ -->
     <bpmn:adHocSubProcess id="SubProcess_Iterate" name="AI Agent: Explore and Iterate"
-                          ordering="Parallel" cancelRemainingInstances="false">
+                          ordering="Parallel">
       <bpmn:extensionElements>
         <zeebe:taskDefinition type="io.camunda:aws-bedrock-agent:1" />
         <zeebe:taskHeaders>
@@ -286,14 +285,15 @@
           <zeebe:taskDefinition type="tool-signal-complete" />
         </bpmn:extensionElements>
       </bpmn:serviceTask>
-
-      <bpmn:boundaryEvent id="BoundaryEvent_IterateTimeout" attachedToRef="SubProcess_Iterate" cancelActivity="true">
-        <bpmn:timerEventDefinition>
-          <bpmn:timeDuration>PT30M</bpmn:timeDuration>
-        </bpmn:timerEventDefinition>
-        <bpmn:outgoing>Flow_timeout_to_park</bpmn:outgoing>
-      </bpmn:boundaryEvent>
     </bpmn:adHocSubProcess>
+
+    <!-- Timer boundary on iterate sub-process (at process level) -->
+    <bpmn:boundaryEvent id="BoundaryEvent_IterateTimeout" attachedToRef="SubProcess_Iterate" cancelActivity="true">
+      <bpmn:timerEventDefinition>
+        <bpmn:timeDuration>PT30M</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+      <bpmn:outgoing>Flow_iterate_timeout_to_park</bpmn:outgoing>
+    </bpmn:boundaryEvent>
 
     <!-- ═══════════════════════════════════════════════════
          GATEWAY: Satisfaction check
@@ -338,7 +338,8 @@
     </bpmn:endEvent>
 
     <bpmn:endEvent id="EndEvent_Parked" name="Session parked — resume link sent">
-      <bpmn:incoming>Flow_timeout_to_park</bpmn:incoming>
+      <bpmn:incoming>Flow_intake_timeout_to_park</bpmn:incoming>
+      <bpmn:incoming>Flow_iterate_timeout_to_park</bpmn:incoming>
     </bpmn:endEvent>
 
     <bpmn:endEvent id="EndEvent_Fallback" name="Agent fallback — support notified">
@@ -358,7 +359,8 @@
     <bpmn:sequenceFlow id="Flow_to_satisfaction_gw" sourceRef="SubProcess_Iterate" targetRef="GW_Satisfaction" />
     <bpmn:sequenceFlow id="Flow_to_deliver" sourceRef="Task_CompileReport" targetRef="Task_DeliverReport" />
     <bpmn:sequenceFlow id="Flow_to_end" sourceRef="Task_DeliverReport" targetRef="EndEvent_Complete" />
-    <bpmn:sequenceFlow id="Flow_timeout_to_park" sourceRef="BoundaryEvent_IntakeTimeout" targetRef="EndEvent_Parked" />
+    <bpmn:sequenceFlow id="Flow_intake_timeout_to_park" sourceRef="BoundaryEvent_IntakeTimeout" targetRef="EndEvent_Parked" />
+    <bpmn:sequenceFlow id="Flow_iterate_timeout_to_park" sourceRef="BoundaryEvent_IterateTimeout" targetRef="EndEvent_Parked" />
     <bpmn:sequenceFlow id="Flow_error_to_fallback" sourceRef="BoundaryEvent_IntakeError" targetRef="EndEvent_Fallback" />
 
   </bpmn:process>

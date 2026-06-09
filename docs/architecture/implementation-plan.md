@@ -4,7 +4,15 @@
 
 Migration from the existing REST-polling + custom Python LLM orchestration to the WebSocket + Camunda AI Agent Connector architecture. The plan is structured in five phases that can each be delivered and tested independently.
 
-**Total estimated effort:** 8–12 days for a single developer familiar with the codebase.
+**Fundamental design shift:** The system is no longer a *configurator* (customer picks a product, tweaks parameters). It is now a *recommender*: the agent collects a full customer profile and existing pension information through conversation, then recommends the best-suited Danica product. The live report builds progressively in three sections:
+
+1. **Customer Profile** — intake answers (demographics, income, goals, risk tolerance) updated in real-time as the conversation progresses
+2. **Existing Coverage** — current pension situation (employer plan, state pension, existing savings) collected during intake
+3. **Recommended Product** — the Danica product best suited to this customer, with a simulation projection and explanation
+
+The customer no longer selects a product before the session starts.
+
+**Total estimated effort:** 9–13 days for a single developer familiar with the codebase.
 
 ---
 
@@ -35,78 +43,85 @@ The Session Broker is the new infrastructure component. Build and test it in iso
 
 ### 1.1 Scaffold the broker service
 
-Create `broker/` directory:
+Create `broker/` directory as a Spring Boot project:
 
 ```
 broker/
-├── src/
-│   ├── index.js          # Entry point
-│   ├── wsServer.js       # WebSocket server, connection lifecycle
-│   ├── sessionStore.js   # In-memory map: sessionId → {ws, processInstanceKey, state}
-│   ├── camundaClient.js  # REST wrapper: createProcessInstance, publishMessage
-│   └── routes.js         # Internal HTTP POST /send endpoint
-├── package.json
-└── .env.example
+├── src/main/java/com/danica/broker/
+│   ├── BrokerApplication.java        # Spring Boot entry point
+│   ├── ws/
+│   │   ├── WebSocketConfig.java      # @EnableWebSocketMessageBroker
+│   │   ├── SessionWebSocketHandler.java  # WebSocket frame handler
+│   │   └── SessionStore.java         # ConcurrentHashMap: sessionId → {ws, processInstanceKey, state}
+│   ├── camunda/
+│   │   └── CamundaClient.java        # REST wrapper: createProcessInstance, publishMessage
+│   └── api/
+│       └── SendController.java       # Internal POST /send endpoint
+├── pom.xml
+└── application.yml
 ```
 
-### 1.2 Implement `wsServer.js`
+### 1.2 Implement `SessionWebSocketHandler.java`
 
-WebSocket server logic:
+WebSocket handler using `spring-websocket`:
 
-```javascript
-// On connection: assign sessionId, wait for start_session frame
-// On start_session: createProcessInstance → store in sessionStore
-// On user_message: publishMessage(name="user_input_received", correlationKey=pik, variables)
-// On resume_session: re-associate ws with existing processInstanceKey
-// On close: mark session disconnected (do NOT delete — process may still be live)
+```java
+// On connection: assign sessionId (UUID), register in SessionStore
+// On start_session frame: call CamundaClient.createProcessInstance (no product variable) → store PIK in SessionStore
+// On user_message frame: call CamundaClient.publishMessage(user_input_received, PIK, vars)
+// On resume_session frame: re-associate WebSocketSession with existing PIK
+// On close: mark session disconnected (do NOT delete — Camunda process still alive)
 ```
 
 Key events to handle:
 - `start_session` → `createProcessInstance` → store mapping
 - `user_message` → `publishMessage`
-- `resume_session` → re-associate WebSocket
-- `ping` / `pong` for keepalive
+- `resume_session` → re-associate WebSocketSession
+- keepalive via Spring's built-in heartbeat
 
-### 1.3 Implement `routes.js` — internal send endpoint
+### 1.3 Implement `SendController.java` — internal send endpoint
 
-```javascript
-// POST /send
+```java
+// POST /internal/send
 // Body: { processInstanceKey, messageType, payload }
-// Looks up WebSocket in sessionStore, sends JSON frame
+// Looks up WebSocketSession in SessionStore, sends JSON frame
 // Returns 200 if delivered, 404 if session not found, 503 if socket closed
 ```
 
-This is the endpoint that `send-to-ui` job worker calls.
+This is the endpoint that the `send-to-ui` job worker calls.
 
-### 1.4 Implement `camundaClient.js`
+### 1.4 Implement `CamundaClient.java`
 
-```javascript
-// createProcessInstance(processDefinitionKey, variables)
-//   POST {CAMUNDA_REST_URL}/v2/process-instances
-//   Auth: Bearer token (reuse token from env or fetch via OAuth)
+```java
+// Uses Spring's RestTemplate or WebClient
 //
-// publishMessage(messageName, correlationKey, variables)
+// createProcessInstance(processDefinitionKey, Map<String,Object> variables)
+//   POST {CAMUNDA_REST_URL}/v2/process-instances
+//   Auth: Bearer token from application.yml
+//
+// publishMessage(String messageName, String correlationKey, Map<String,Object> variables)
 //   POST {CAMUNDA_REST_URL}/v2/messages/publication
 ```
 
-Reuse the OAuth token flow from existing `workers/camunda_client.py` — same credentials, different language.
+### 1.5 Add environment variables (`application.yml`)
 
-### 1.5 Add environment variables
+```yaml
+camunda:
+  rest-url: https://...
+  rest-token: ...        # or configure OAuth2 client credentials
+  process-definition-key: pension-configurator
 
-```
-CAMUNDA_REST_URL=https://...
-CAMUNDA_REST_TOKEN=...   # or ZEEBE_CLIENT_ID/SECRET for OAuth flow
-PROCESS_DEFINITION_KEY=pension-configurator
-PORT=3001                # WebSocket + HTTP server port
+server:
+  port: 3001             # WebSocket + HTTP server port
 ```
 
 ### 1.6 Testing
 
-Write integration tests (Jest or pytest) that:
+Write Spring Boot integration tests (`@SpringBootTest`) that:
 1. Connect a mock WebSocket client
 2. Send `start_session` → verify `processInstanceKey` returned
-3. Call `POST /send` → verify WebSocket frame received
-4. Send `user_message` → verify `publishMessage` called with correct args (mock Camunda)
+3. Call `POST /internal/send` → verify WebSocket frame received
+4. Send `user_message` → verify `publishMessage` called with correct args (mock Camunda via `@MockBean`)
 
 ---
 
@@ -125,20 +140,28 @@ Open `bpmn/pension-configurator.bpmn` in Camunda Web Modeler and make these chan
 
 **Keep:**
 - Start Event
-- Init script task (update to set `sessionId` from process variable)
+- Init script task (update to initialise empty profile variables — no product variable at start)
 - Overall process flow structure
 - Error boundary events
 
 **Replace / Add:**
 1. **Remove** all individual service tasks for tool workers (`tool-ask-question`, `tool-store-answer`, `tool-assess-sufficiency`, etc.)
 2. **Remove** the intake and iterate sub-process definitions (they were custom orchestration)
-3. **Add** a single **ad-hoc sub-process** spanning the main agent interaction
-4. **Apply** the `agenticai-aiagent-job-worker` element template to this sub-process
-5. **Inside** the ad-hoc sub-process, add three service tasks:
+3. **Update init script task** to set initial process variables:
+   ```
+   customerProfile = {}        // filled progressively during intake
+   existingCoverage = {}       // employer pension, state pension, savings
+   recommendedProduct = null   // set by agent after assessment
+   simulationResult = null
+   ```
+4. **Add** a single **ad-hoc sub-process** spanning the main agent interaction
+5. **Apply** the `agenticai-aiagent-job-worker` element template to this sub-process
+6. **Inside** the ad-hoc sub-process, add four service tasks:
    - `send-to-ui` (task type: `send-to-ui`)
    - `run-simulation` (task type: `run-simulation`)
    - `search-kb` (task type: `search-kb`)
-6. **Add** a non-interrupting **Message Intermediate Catch Event** to the sub-process boundary:
+   - `update-profile` (task type: `update-profile`) — stores collected profile/coverage data as process variables
+7. **Add** a non-interrupting **Message Intermediate Catch Event** to the sub-process boundary:
    - Message name: `user_input_received`
    - Correlation key expression: `=processInstanceKey`
    - Output variable: `userMessage`
@@ -163,23 +186,49 @@ In the Web Modeler, configure the ad-hoc sub-process with the AI Agent Connector
 
 ### 2.4 Write the system prompt (FEEL expression)
 
-The system prompt must describe the agent's role and all available tools:
+The system prompt must describe the agent's recommender role and all available tools:
 
 ```
-"You are a pension advisor for Danica Pension. You help customers configure their pension plan through conversation.
+"You are a pension advisor for Danica Pension. Your goal is to understand the customer's full situation
+and recommend the Danica product that best fits their needs — not to configure a product they have already chosen.
 
 You have access to these tools:
-- send-to-ui: Send a message to the user. Use messageType 'question' to ask the user something, 'agent_message' for informational responses, 'summary' after running an initial simulation, and 'report' when delivering updated simulation data.
-- run-simulation: Run a pension projection. Provide the customer profile fields you have collected.
-- search-kb: Look up product information from the Danica knowledge base.
+- send-to-ui: Send a message or a live report update to the user interface.
+  Use messageType:
+    'question'         — ask the user one question
+    'agent_message'    — informational response (no question, no report update)
+    'profile_update'   — update the Profile section of the live report with collected data so far
+    'existing_update'  — update the Existing Coverage section of the live report
+    'recommendation'   — present the recommended product with explanation (before simulation)
+    'report'           — full live report update after simulation (all three sections)
+    'report_final'     — confirmed final report
+
+- update-profile: Persist collected profile or coverage data as process variables so the live report
+  can be restored on reconnect. Call this after each meaningful intake answer, not after every message.
+
+- run-simulation: Run a pension projection for a specific product and customer profile.
+  Always call this AFTER making a recommendation, using the recommended productCode.
+
+- search-kb: Look up Danica product details, eligibility rules, or coverage information.
 
 Workflow:
-1. Collect the customer's age, annual salary, desired retirement age, and monthly contribution through conversation.
-2. Once you have these, run a simulation and send a summary.
-3. Continue refining with the customer based on their feedback.
-4. When the customer confirms they are satisfied, send a report_final message.
+1. PROFILE COLLECTION — Ask about: age, annual gross salary, desired retirement age, family status,
+   number of dependants, monthly contribution capacity, risk tolerance (LOW/MEDIUM/HIGH), and
+   primary pension goal (income replacement / lump sum / flexibility).
+   After each answer, call update-profile and send a profile_update frame.
+2. EXISTING COVERAGE — Ask about: employer pension (provider, monthly contribution),
+   state pension estimate, any private savings or insurance.
+   Call update-profile and send an existing_update frame.
+3. PRODUCT RECOMMENDATION — Use search-kb to understand which Danica products match this profile.
+   Send a recommendation frame with the product name, key reasons, and trade-offs.
+4. SIMULATION — Call run-simulation with the recommended productCode and full profile.
+   Send a report frame with all three sections populated.
+5. EXPLORATION — Allow the customer to adjust contribution, retirement age, or risk profile
+   and re-run simulation. Send a report frame on each change.
+6. CONFIRMATION — When the customer confirms, send a report_final frame.
 
-Always ask one question at a time. Match the customer's language (Danish or English)."
+Always ask one question at a time. Match the customer's language (Danish or English).
+Never recommend a product before completing steps 1 and 2."
 ```
 
 ### 2.5 Tool schema declarations
@@ -190,14 +239,33 @@ For each tool task inside the sub-process, the connector needs to know the tool'
 ```json
 {
   "name": "send-to-ui",
-  "description": "Send a message to the user interface",
+  "description": "Send a message or live report update to the user interface",
   "parameters": {
     "type": "object",
     "properties": {
-      "messageType": {"type": "string", "enum": ["question","agent_message","summary","report","report_final"]},
-      "content": {"type": "object", "description": "Message payload"}
+      "messageType": {
+        "type": "string",
+        "enum": ["question","agent_message","profile_update","existing_update","recommendation","report","report_final"]
+      },
+      "content": {"type": "object", "description": "Message payload — structure depends on messageType (see system prompt)"}
     },
     "required": ["messageType", "content"]
+  }
+}
+```
+
+**update-profile schema:**
+```json
+{
+  "name": "update-profile",
+  "description": "Persist collected customer profile or existing coverage data as process variables",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "section": {"type": "string", "enum": ["customerProfile", "existingCoverage"]},
+      "fields": {"type": "object", "description": "Key-value pairs to merge into the named section"}
+    },
+    "required": ["section", "fields"]
   }
 }
 ```
@@ -206,10 +274,11 @@ For each tool task inside the sub-process, the connector needs to know the tool'
 ```json
 {
   "name": "run-simulation",
-  "description": "Run a pension projection simulation",
+  "description": "Run a pension projection for the recommended product and customer profile",
   "parameters": {
     "type": "object",
     "properties": {
+      "productCode": {"type": "string", "description": "Danica product code, e.g. DANICA_BALANCE, DANICA_LINK"},
       "age": {"type": "integer"},
       "annualSalary": {"type": "number"},
       "desiredRetirementAge": {"type": "integer"},
@@ -217,7 +286,7 @@ For each tool task inside the sub-process, the connector needs to know the tool'
       "riskProfile": {"type": "string", "enum": ["LOW","MEDIUM","HIGH"]},
       "payoutType": {"type": "string", "enum": ["LUMP_SUM","ANNUITY","LIFE_ANNUITY","COMBINED"]}
     },
-    "required": ["age", "annualSalary", "desiredRetirementAge", "monthlyContribution"]
+    "required": ["productCode", "age", "annualSalary", "desiredRetirementAge", "monthlyContribution"]
   }
 }
 ```
@@ -226,7 +295,7 @@ For each tool task inside the sub-process, the connector needs to know the tool'
 ```json
 {
   "name": "search-kb",
-  "description": "Search the Danica knowledge base for product or policy information",
+  "description": "Search the Danica knowledge base for product details, eligibility rules, or coverage information",
   "parameters": {
     "type": "object",
     "properties": {
@@ -247,112 +316,187 @@ For each tool task inside the sub-process, the connector needs to know the tool'
 
 ## Phase 3: Job Workers Migration (1.5 days)
 
-Strip LLM logic from workers, add the three new tool workers.
+Create the Spring Boot workers project. Workers are pure tool implementations with zero LLM logic — the AI Agent Connector owns the reasoning loop.
 
-### 3.1 Remove old workers
+### 3.1 Scaffold the workers service
 
-Delete or archive the following worker functions from `workers/tools/workers.py` (or equivalent):
-- `assess_sufficiency` (LLM call — replaced by connector)
-- `parse_intent` (LLM call — replaced by connector)
-- `explain_delta` (LLM call — replaced by connector)
-- `ask_question` (replaced by `send-to-ui` tool)
-- `store_answer` (replaced by connector handling variables)
-- `signal_complete` (replaced by connector completion condition)
-- `deliver_report` (replaced by `send-to-ui` tool)
+Create `workers/` as a Spring Boot project:
 
-Keep (they become tool implementations):
-- `run_simulation` → rename task type to `run-simulation`, strip orchestration logic
-- `query_kb` → rename task type to `search-kb`, strip orchestration logic
-- `init_session` → keep as-is, update to store `sessionId`
-- `check_eligibility` → keep, but convert to a tool the LLM can call if needed
-
-### 3.2 Add `send-to-ui` worker
-
-New file `workers/tools/send_to_ui.py`:
-
-```python
-@worker.task(task_type="send-to-ui", timeout_ms=10_000)
-async def send_to_ui(job: Job):
-    variables = job.variables
-    tool_call = variables.get("toolCall", {})
-    process_instance_key = variables.get("processInstanceKey")
-
-    message_type = tool_call.get("messageType")
-    content = tool_call.get("content")
-
-    # Call Session Broker internal endpoint
-    response = requests.post(
-        f"{BROKER_INTERNAL_URL}/send",
-        json={
-            "processInstanceKey": str(process_instance_key),
-            "messageType": message_type,
-            "payload": content
-        },
-        timeout=5
-    )
-
-    if response.status_code == 404:
-        # Session disconnected — complete anyway, message will be delivered on reconnect
-        await job.set_success_status(variables={"toolCallResult": "session_not_connected"})
-        return
-
-    await job.set_success_status(variables={"toolCallResult": "delivered"})
+```
+workers/
+├── src/main/java/com/danica/workers/
+│   ├── WorkersApplication.java           # Spring Boot entry point
+│   ├── SendToUiWorker.java               # @ZeebeWorker type=send-to-ui
+│   ├── UpdateProfileWorker.java          # @ZeebeWorker type=update-profile
+│   ├── RunSimulationWorker.java          # @ZeebeWorker type=run-simulation
+│   ├── SearchKbWorker.java               # @ZeebeWorker type=search-kb
+│   ├── client/
+│   │   ├── BrokerClient.java             # HTTP POST /internal/send to Session Broker
+│   │   └── CalculatorClient.java         # HTTP POST /simulate to Calculator API
+│   └── kb/
+│       └── BedrockKbClient.java          # AWS SDK Java: retrieve_and_generate
+├── pom.xml
+└── application.yml
 ```
 
-### 3.3 Update `run-simulation` worker
+**`pom.xml` key dependencies:**
+```xml
+<dependency>
+  <groupId>io.camunda.spring</groupId>
+  <artifactId>spring-boot-starter-camunda</artifactId>
+</dependency>
+<dependency>
+  <groupId>software.amazon.awssdk</groupId>
+  <artifactId>bedrockagentruntime</artifactId>
+</dependency>
+<dependency>
+  <groupId>org.springframework.boot</groupId>
+  <artifactId>spring-boot-starter-web</artifactId>
+</dependency>
+```
 
-```python
-@worker.task(task_type="run-simulation", timeout_ms=30_000)
-async def run_simulation(job: Job):
-    tool_call = job.variables.get("toolCall", {})
+### 3.2 Implement `SendToUiWorker.java`
 
-    payload = {
-        "age": tool_call.get("age"),
-        "annual_salary": tool_call.get("annualSalary"),
-        "desired_retirement_age": tool_call.get("desiredRetirementAge"),
-        "monthly_contribution": tool_call.get("monthlyContribution"),
-        "risk_profile": tool_call.get("riskProfile", "MEDIUM"),
-        "payout_type": tool_call.get("payoutType", "ANNUITY"),
-        # ... map remaining fields
+```java
+@Component
+public class SendToUiWorker {
+
+    private final BrokerClient brokerClient;
+
+    @ZeebeWorker(type = "send-to-ui", timeout = "PT10S")
+    public void handle(JobClient client, ActivatedJob job) {
+        Map<String, Object> toolCall = (Map<String, Object>) job.getVariablesAsMap().get("toolCall");
+        String processInstanceKey = String.valueOf(job.getProcessInstanceKey());
+
+        String result = brokerClient.send(processInstanceKey,
+            (String) toolCall.get("messageType"),
+            toolCall.get("content"));
+
+        client.newCompleteCommand(job)
+            .variable("toolCallResult", result)
+            .send()
+            .join();
     }
-
-    response = requests.post(f"{CALCULATOR_API_URL}/simulate", json=payload, timeout=15)
-    result = response.json()
-
-    await job.set_success_status(variables={"toolCallResult": json.dumps(result)})
+}
 ```
 
-### 3.4 Update `search-kb` worker
+**`BrokerClient.java`** calls `POST {BROKER_INTERNAL_URL}/internal/send` with `{ processInstanceKey, messageType, payload }`. Returns `"delivered"` on 200 or `"session_not_connected"` on 404.
 
-```python
-@worker.task(task_type="search-kb", timeout_ms=30_000)
-async def search_kb(job: Job):
-    tool_call = job.variables.get("toolCall", {})
-    query = tool_call.get("query", "")
+### 3.3 Implement `UpdateProfileWorker.java`
 
-    answer = query_knowledge_base(query, n_results=5)
+This worker writes collected profile or coverage data back into Camunda process variables so the live report can be restored on reconnect and so the data persists across sub-process iterations.
 
-    await job.set_success_status(variables={"toolCallResult": answer})
+```java
+@Component
+public class UpdateProfileWorker {
+
+    @ZeebeWorker(type = "update-profile", timeout = "PT5S")
+    public void handle(JobClient client, ActivatedJob job) {
+        Map<String, Object> toolCall = (Map<String, Object>) job.getVariablesAsMap().get("toolCall");
+        String section = (String) toolCall.get("section");            // "customerProfile" or "existingCoverage"
+        Map<String, Object> fields = (Map<String, Object>) toolCall.get("fields");
+
+        // Merge incoming fields into the existing section map
+        Map<String, Object> existing = (Map<String, Object>) job.getVariablesAsMap()
+            .getOrDefault(section, new HashMap<>());
+        existing.putAll(fields);
+
+        client.newCompleteCommand(job)
+            .variable(section, existing)
+            .variable("toolCallResult", "updated")
+            .send()
+            .join();
+    }
+}
 ```
 
-### 3.5 Update `main.py` worker registry
+### 3.4 Implement `RunSimulationWorker.java`
 
-```python
-REGISTERED_WORKERS = [
-    "init-session",
-    "send-to-ui",
-    "run-simulation",
-    "search-kb",
-    "check-eligibility",   # keep as optional tool
-]
+```java
+@Component
+public class RunSimulationWorker {
+
+    private final CalculatorClient calculatorClient;
+
+    @ZeebeWorker(type = "run-simulation", timeout = "PT30S")
+    public void handle(JobClient client, ActivatedJob job) {
+        Map<String, Object> toolCall = (Map<String, Object>) job.getVariablesAsMap().get("toolCall");
+
+        SimulationRequest request = SimulationRequest.builder()
+            .productCode((String) toolCall.get("productCode"))        // required — agent sets after recommendation
+            .age((Integer) toolCall.get("age"))
+            .annualSalary(((Number) toolCall.get("annualSalary")).doubleValue())
+            .desiredRetirementAge((Integer) toolCall.get("desiredRetirementAge"))
+            .monthlyContribution(((Number) toolCall.get("monthlyContribution")).doubleValue())
+            .riskProfile((String) toolCall.getOrDefault("riskProfile", "MEDIUM"))
+            .payoutType((String) toolCall.getOrDefault("payoutType", "ANNUITY"))
+            .build();
+
+        SimulationResult result = calculatorClient.simulate(request);
+
+        client.newCompleteCommand(job)
+            .variable("toolCallResult", result.toJson())
+            .variable("simulationResult", result)           // also persist for reconnect
+            .variable("recommendedProduct", request.getProductCode())
+            .send()
+            .join();
+    }
+}
 ```
 
-Add `BROKER_INTERNAL_URL` to environment variables.
+### 3.5 Implement `SearchKbWorker.java`
 
-### 3.6 Delete obsolete files
+```java
+@Component
+public class SearchKbWorker {
 
-- `workers/prompts.py` — all prompts now live in the BPMN element template
-- `workers/bedrock_client.py` `invoke_llm()` and `invoke_llm_json()` functions (keep `query_knowledge_base`)
+    private final BedrockKbClient kbClient;
+
+    @ZeebeWorker(type = "search-kb", timeout = "PT30S")
+    public void handle(JobClient client, ActivatedJob job) {
+        Map<String, Object> toolCall = (Map<String, Object>) job.getVariablesAsMap().get("toolCall");
+        String query = (String) toolCall.get("query");
+
+        String answer = kbClient.retrieveAndGenerate(query);
+
+        client.newCompleteCommand(job)
+            .variable("toolCallResult", answer)
+            .send()
+            .join();
+    }
+}
+```
+
+**`BedrockKbClient.java`** uses the AWS SDK Java v2 `BedrockAgentRuntimeClient` to call `retrieve_and_generate` with the configured Knowledge Base ID.
+
+### 3.6 Add environment variables (`application.yml`)
+
+```yaml
+camunda:
+  client:
+    zeebe:
+      grpc-address: ${ZEEBE_ADDRESS}
+    auth:
+      client-id: ${ZEEBE_CLIENT_ID}
+      client-secret: ${ZEEBE_CLIENT_SECRET}
+
+broker:
+  internal-url: ${BROKER_INTERNAL_URL:http://localhost:3001}
+
+calculator:
+  api-url: ${CALCULATOR_API_URL:http://localhost:8080}
+
+aws:
+  region: ${AWS_REGION:eu-west-1}
+  bedrock-kb-id: ${BEDROCK_KB_ID}
+```
+
+### 3.7 Delete obsolete files
+
+If migrating from an existing Python workers module:
+- Remove `workers/prompts.py` — all prompts now live in the BPMN element template
+- Remove LLM-calling functions from `workers/bedrock_client.py` (`invoke_llm`, `invoke_llm_json`); keep `query_knowledge_base` only if not yet replaced by `BedrockKbClient.java`
+- Remove any `assess_sufficiency`, `parse_intent`, `explain_delta`, `ask_question`, `store_answer`, `signal_complete`, `deliver_report` worker functions (all replaced by the connector)
 
 ---
 
@@ -413,6 +557,11 @@ Add:
 - `useSessionSocket` hook
 - Message dispatcher that routes incoming WS frames to UI state:
 
+The live report panel has **three sections** that update independently:
+- **Profile** — customer demographics, income, goals, risk tolerance
+- **Existing Coverage** — employer pension, state pension, private savings
+- **Recommended Product** — product name + rationale + simulation
+
 ```javascript
 function handleMessage(frame) {
   switch (frame.type) {
@@ -422,16 +571,29 @@ function handleMessage(frame) {
     case 'agent_message':
       setMessages(m => [...m, { role: 'agent', content: frame.content }]);
       break;
-    case 'summary':
-      setSummary(frame.content);
+    case 'profile_update':
+      // Progressive update: merge new fields into the profile panel
+      setProfile(p => ({ ...p, ...frame.content }));
+      break;
+    case 'existing_update':
+      // Progressive update: merge new fields into the existing coverage panel
+      setExistingCoverage(p => ({ ...p, ...frame.content }));
+      break;
+    case 'recommendation':
+      // Show recommended product card (before simulation runs)
+      setRecommendation(frame.content);   // { productCode, productName, reasons, tradeoffs }
       setMessages(m => [...m, { role: 'agent', content: frame.content.explanation }]);
       break;
     case 'report':
-      setReport(frame.content.simulationResult);
+      // Full report update: all three sections populated after simulation
+      setProfile(frame.content.customerProfile);
+      setExistingCoverage(frame.content.existingCoverage);
+      setRecommendation(frame.content.recommendation);
+      setSimulationResult(frame.content.simulationResult);
       setMessages(m => [...m, { role: 'agent', content: frame.content.explanation }]);
       break;
     case 'report_final':
-      setReport(frame.content.configuration);
+      setSimulationResult(frame.content.simulationResult);
       setSessionComplete(true);
       break;
     case 'error':
@@ -439,6 +601,14 @@ function handleMessage(frame) {
       break;
   }
 }
+```
+
+**State shape:**
+```javascript
+const [profile, setProfile]                   = useState({});   // age, salary, retirementAge, riskProfile, ...
+const [existingCoverage, setExistingCoverage] = useState({});   // employerPension, statePension, savings, ...
+const [recommendation, setRecommendation]     = useState(null); // productCode, productName, reasons, tradeoffs
+const [simulationResult, setSimulationResult] = useState(null); // projectedPension, salaryReplacement, ...
 ```
 
 ### 4.3 Update environment variables
@@ -473,12 +643,12 @@ services:
       - PROCESS_DEFINITION_KEY=pension-configurator
 
   workers:
-    build: ./workers
+    build: ./workers          # Spring Boot Maven build (Dockerfile: mvn package, java -jar)
     environment:
       - ZEEBE_ADDRESS
       - ZEEBE_CLIENT_ID
       - ZEEBE_CLIENT_SECRET
-      - CALCULATOR_API_URL=http://api:8001
+      - CALCULATOR_API_URL=http://api:8080
       - BROKER_INTERNAL_URL=http://broker:3001
       - AWS_REGION
       - AWS_ACCESS_KEY_ID
@@ -486,8 +656,8 @@ services:
       - BEDROCK_KB_ID
 
   api:
-    build: ./api
-    ports: ["8001:8001"]
+    build: ./api              # Spring Boot Maven build
+    ports: ["8080:8080"]
 
   ui:
     build: ./ui
@@ -498,16 +668,18 @@ services:
 
 ### 5.2 End-to-end test scenarios
 
-**Happy path — full session:**
-1. Connect WebSocket, receive `session_ready`
-2. Receive first question from agent
-3. Answer 5-6 intake questions
-4. Verify `run-simulation` is called with correct parameters
-5. Verify `summary` frame received with correct structure
-6. Send parameter change message
-7. Verify updated `report` frame received
-8. Confirm session
-9. Verify `report_final` frame and `session_complete`
+**Happy path — full recommender session:**
+1. Connect WebSocket (no product pre-selection), receive `session_ready`
+2. Receive first question from agent (age, salary, retirement goal, etc.)
+3. Answer ~5 profile questions — verify `profile_update` frames update the Profile panel progressively
+4. Answer ~3 existing coverage questions — verify `existing_update` frames update the Coverage panel
+5. Verify agent calls `search-kb` to query product catalog before recommending
+6. Verify `recommendation` frame received with `productCode`, `productName`, `reasons`
+7. Verify `run-simulation` is called with the recommended `productCode`
+8. Verify `report` frame received with all three sections (profile, existing, recommendation+simulation)
+9. Send parameter change ("what if I contribute 500 more per month")
+10. Verify updated `report` frame with new simulation numbers
+11. Confirm session → verify `report_final` frame and `session_complete`
 
 **Reconnection scenario:**
 1. Start session, receive first question
@@ -538,9 +710,7 @@ Compare against previous polling design (minimum 2s delay + processing time).
 ## Phase 6: Cleanup and Documentation (0.5 days)
 
 ### 6.1 Remove obsolete code
-- `workers/prompts.py` (LLM system prompts — replaced by BPMN element template configuration)
-- `workers/bedrock_client.py` `invoke_llm`, `invoke_llm_json` (LLM call logic)
-- `workers/camunda_client.py` `set_process_variable` (no longer called from workers)
+- Python worker files (`workers/prompts.py`, `workers/bedrock_client.py`, `workers/main.py`) if the project had a previous Python workers implementation — all replaced by Spring Boot `workers/` module
 - Polling constants and functions in `ui/src/App.jsx`
 
 ### 6.2 Update README
@@ -585,6 +755,9 @@ Phases 1, 2, and 3 can partially overlap. Phase 4 can start once Phase 1 is test
 | Session map lost on broker restart mid-session | Low | Medium | Implement Redis-backed session store for production; in-memory acceptable for demo |
 | LLM tool call schema mismatch (connector rejects tool call) | Medium | Medium | Validate schemas against connector expectations in Phase 2 smoke test |
 | CORS / auth between broker internal HTTP and workers | Low | Low | Both run in same network in production; add simple bearer token for broker `/send` |
+| Agent recommends product before collecting full profile | Medium | High | Enforce in system prompt: explicit ordering constraint (steps 1→2→3); test with short-cut user answers |
+| Calculator API rejects unknown `productCode` | Medium | Medium | Validate productCode enum server-side; return 400 with message so worker returns error toolCallResult |
+| Connector hits 10 LLM call limit before recommendation is made (long intake) | Medium | Medium | Profile + coverage collection spans two sub-process entries if needed; increase max model calls to 15 for intake sub-process |
 
 ---
 
@@ -592,17 +765,13 @@ Phases 1, 2, and 3 can partially overlap. Phase 4 can start once Phase 1 is test
 
 | File | Action | Notes |
 |------|--------|-------|
-| `broker/` | Create | New service — WebSocket server + session store |
-| `bpmn/pension-configurator.bpmn` | Rewrite | AI Agent Connector, 3 tool tasks, message events |
+| `broker/` | Create | Spring Boot WebSocket server + session store |
+| `workers/` | Create | Spring Boot @ZeebeWorker project (send-to-ui, update-profile, run-simulation, search-kb) |
+| `api/` | Create/Update | Spring Boot Calculator API — `/simulate` must accept `productCode`; no longer optional |
+| `bpmn/pension-configurator.bpmn` | Rewrite | AI Agent Connector, 4 tool tasks (incl. update-profile), message events |
 | `bpmn/pension-configurator-v1.bpmn` | Create | Backup of existing |
-| `workers/tools/send_to_ui.py` | Create | New tool worker |
-| `workers/tools/workers.py` | Heavily edit | Remove 9 workers, update 2, keep 3 |
-| `workers/main.py` | Edit | Update registered worker list |
-| `workers/prompts.py` | Delete | Prompts move to BPMN element template |
-| `workers/bedrock_client.py` | Partially edit | Remove `invoke_llm`, `invoke_llm_json`; keep `query_knowledge_base` |
-| `workers/camunda_client.py` | Partially edit | Remove `set_process_variable` direct calls |
 | `ui/src/hooks/useSessionSocket.js` | Create | WebSocket hook |
 | `ui/src/App.jsx` | Edit | Remove polling, add WS hook and message dispatcher |
 | `ui/.env` | Edit | Replace `VITE_CAMUNDA_API_URL` with `VITE_BROKER_WS_URL` |
-| `api/` | No change | Calculator API unchanged |
+| `docker-compose.yml` | Create/Update | All Spring Boot services wired together |
 | `README.md` | Edit | Updated setup instructions |

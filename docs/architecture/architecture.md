@@ -48,15 +48,15 @@ graph TB
         end
     end
 
-    subgraph Workers["Job Workers (Python)"]
+    subgraph Workers["Job Workers (Spring Boot — @ZeebeWorker)"]
         W1["send-to-ui worker\nPushes payload over WS\nCompletes job immediately"]
-        W2["simulate worker\nCalls Calculator API\nReturns simulation result"]
+        W2["run-simulation worker\nCalls Calculator API\nReturns simulation result"]
         W3["search-kb worker\nQueries Bedrock KB\nReturns answer text"]
     end
 
     subgraph External["External Services"]
         LLM["AWS Bedrock\n(Claude 3.5 Sonnet)"]
-        CALC["Calculator API\n(FastAPI)\n/simulate  /eligibility"]
+        CALC["Calculator API\n(Spring Boot / Spring MVC)\n/simulate  /eligibility"]
         KB["Bedrock Knowledge Base\n(Hybrid search)"]
     end
 
@@ -127,7 +127,7 @@ sessionId → {
 }
 ```
 
-**Technology:** Node.js (`ws` + `express`) or Python (`websockets` + `fastapi`). Stateless except for the in-memory session map (can be Redis-backed for horizontal scaling).
+**Technology:** Spring Boot (`spring-websocket` + STOMP). Stateless except for the in-memory session map (can be Redis-backed for horizontal scaling with Spring Session).
 
 ---
 
@@ -194,7 +194,7 @@ sessionId → {
 
 ### 5. Job Workers (`workers/`)
 
-These are standard Zeebe job workers (PyZeebe). Unlike the previous design, they contain **no LLM logic** — they are pure tool implementations called by the connector.
+These are standard Zeebe job workers (Spring Boot, `camunda-zeebe-spring-boot-starter`). Unlike the previous design, they contain **no LLM logic** — they are pure tool implementations called by the connector.
 
 #### `send-to-ui` Worker
 - Receives: `toolCall.payload` (JSON), `toolCall.messageType` (`summary` | `report` | `agent_message` | `question`)
@@ -216,7 +216,7 @@ These are standard Zeebe job workers (PyZeebe). Unlike the previous design, they
 
 ### 6. Calculator API (`api/`)
 
-No changes. FastAPI service exposing `/simulate`, `/eligibility`, `/products/{code}/defaults`. Unchanged from previous design.
+Spring Boot service exposing `/simulate`, `/eligibility`, `/products/{code}/defaults`. Stateless REST API (Spring MVC). Called exclusively by the `run-simulation` job worker.
 
 ---
 
@@ -244,17 +244,17 @@ Process instance keys are unique and available in all workers via the job contex
 
 ## Technology Stack
 
-| Layer | Technology | Version |
-|-------|-----------|---------|
+| Layer | Technology | Notes |
+|-------|-----------|-------|
 | Frontend | React + Vite | 18.3 / 5.4 |
-| WebSocket (client) | Browser WebSocket API | native |
-| Session Broker | Node.js + `ws` + `express` | Node 20 |
+| WebSocket (client) | Browser WebSocket API | native, no library |
+| Session Broker | Spring Boot (`spring-websocket`) | STOMP · Java 17+ |
 | Process Engine | Camunda 8 Cloud (Zeebe) | 8.8+ |
-| AI Agent Connector | Camunda agentic-ai connector | built-in |
+| AI Agent Connector | Camunda agentic-ai connector | `agenticai-aiagent-job-worker` variant |
 | LLM | AWS Bedrock (Claude 3.5 Sonnet) | `anthropic.claude-3-5-sonnet-20241022-v2:0` |
-| Job Workers | Python + PyZeebe | 4.4.0 |
-| Calculator API | FastAPI + Pydantic | 0.115 / 2.9 |
-| Knowledge Base | AWS Bedrock KB | — |
+| Job Workers | Spring Boot (`camunda-zeebe-spring-boot-starter`) | `@ZeebeWorker` · Java 17+ |
+| Calculator API | Spring Boot (Spring MVC) | Stateless REST · Java 17+ |
+| Knowledge Base | AWS Bedrock KB | Titan Embeddings v2 · hybrid search |
 
 ---
 

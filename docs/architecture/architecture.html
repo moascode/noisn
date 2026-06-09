@@ -1,0 +1,846 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Noisn – Architecture Diagram</title>
+<style>
+  :root {
+    --blue:    #1B4F8A;
+    --green:   #059669;
+    --amber:   #D97706;
+    --purple:  #7C3AED;
+    --teal:    #0D9488;
+    --red:     #DC2626;
+    --gray:    #64748b;
+    --border:  #CBD5E1;
+    --bg:      #F8FAFC;
+    --white:   #FFFFFF;
+    --text:    #1E293B;
+    --shadow:  0 4px 16px rgba(0,0,0,.10);
+    --shadow-sm: 0 2px 6px rgba(0,0,0,.07);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+  /* Header */
+  header { background: var(--blue); color: #fff; padding: 20px 36px; display: flex; align-items: center; justify-content: space-between; box-shadow: var(--shadow); }
+  header h1 { font-size: 1.4rem; font-weight: 700; }
+  header p  { font-size: .82rem; opacity: .7; margin-top: 3px; }
+  .badge { background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.3); border-radius: 20px; padding: 4px 14px; font-size: .75rem; letter-spacing: .05em; text-transform: uppercase; }
+
+  /* Tabs */
+  .tabs { display: flex; gap: 4px; padding: 14px 36px 0; border-bottom: 2px solid var(--border); background: var(--white); overflow-x: auto; }
+  .tab { padding: 9px 20px; border: none; background: none; font-size: .88rem; font-weight: 500; color: var(--gray); cursor: pointer; border-bottom: 3px solid transparent; margin-bottom: -2px; transition: all .2s; border-radius: 6px 6px 0 0; white-space: nowrap; }
+  .tab:hover  { background: #F1F5F9; color: var(--blue); }
+  .tab.active { color: var(--blue); border-bottom-color: var(--blue); background: var(--bg); }
+
+  /* Canvas */
+  .canvas { padding: 32px 36px; display: none; }
+  .canvas.active { display: block; }
+
+  /* Diagram tab */
+  .diagram-container { background: var(--white); border: 1.5px solid var(--border); border-radius: 12px; padding: 20px; overflow-x: auto; box-shadow: var(--shadow-sm); }
+  .diagram-container svg { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+
+  /* Legend */
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; padding: 14px 18px; background: var(--white); border: 1.5px solid var(--border); border-radius: 10px; margin-bottom: 22px; align-items: center; }
+  .legend-item { display: flex; align-items: center; gap: 7px; font-size: .78rem; color: var(--text); }
+  .legend-dot { width: 11px; height: 11px; border-radius: 3px; flex-shrink: 0; }
+
+  /* Layer overview */
+  .layers { display: flex; flex-direction: column; gap: 18px; }
+  .layer { background: var(--white); border: 1.5px solid var(--border); border-radius: 12px; padding: 18px 22px; box-shadow: var(--shadow-sm); position: relative; }
+  .layer-label { position: absolute; top: -10px; left: 18px; font-size: .68rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; padding: 2px 10px; border-radius: 20px; border: 1.5px solid; }
+
+  .l-browser  { border-color: #93C5FD; }
+  .l-browser  .layer-label { background:#EFF6FF; color:#1D4ED8; border-color:#93C5FD; }
+  .l-broker   { border-color: #FCD34D; }
+  .l-broker   .layer-label { background:#FFFBEB; color:#92400E; border-color:#FCD34D; }
+  .l-camunda  { border-color: #6EE7B7; }
+  .l-camunda  .layer-label { background:#ECFDF5; color:#065F46; border-color:#6EE7B7; }
+  .l-workers  { border-color: #FCA5A5; }
+  .l-workers  .layer-label { background:#FEF2F2; color:#991B1B; border-color:#FCA5A5; }
+  .l-aws      { border-color: #C4B5FD; }
+  .l-aws      .layer-label { background:#F5F3FF; color:#5B21B6; border-color:#C4B5FD; }
+
+  .nodes { display: flex; flex-wrap: wrap; gap: 10px; padding-top: 4px; }
+  .node { display: flex; align-items: center; gap: 8px; background: #F8FAFC; border: 1.5px solid var(--border); border-radius: 9px; padding: 9px 14px; font-size: .82rem; font-weight: 500; cursor: pointer; transition: all .18s; }
+  .node:hover { transform: translateY(-2px); box-shadow: var(--shadow); }
+  .node.hl    { border-color: var(--blue); box-shadow: 0 0 0 2px rgba(27,79,138,.2); }
+  .node-icon  { width: 26px; height: 26px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: .95rem; flex-shrink: 0; }
+
+  /* Arrow rows */
+  .arrow-row { display: flex; justify-content: center; gap: 36px; }
+  .arrow-col { display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: .68rem; color: var(--gray); }
+  .arrow-line { width: 2px; height: 22px; background: linear-gradient(to bottom, transparent, var(--border), var(--border), transparent); position: relative; }
+  .arrow-line::after { content: ''; position: absolute; bottom: 0; left: 50%; transform: translateX(-50%); border: 4px solid transparent; border-top-color: var(--border); border-bottom: none; }
+  .arrow-pip { background: var(--white); border: 1px solid var(--border); border-radius: 8px; padding: 2px 7px; font-size: .64rem; white-space: nowrap; }
+
+  /* Flow steps */
+  .flow { display: flex; flex-direction: column; gap: 0; max-width: 700px; margin: 0 auto; }
+  .flow-step { display: flex; gap: 18px; align-items: flex-start; position: relative; }
+  .flow-step:not(:last-child)::before { content: ''; position: absolute; left: 21px; top: 44px; width: 2px; height: calc(100% - 8px); background: var(--border); z-index: 0; }
+  .step-num { width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: .92rem; flex-shrink: 0; position: relative; z-index: 1; border: 2px solid; }
+  .flow-card { background: var(--white); border: 1.5px solid var(--border); border-radius: 10px; padding: 14px 18px; flex: 1; margin-bottom: 18px; box-shadow: var(--shadow-sm); }
+  .flow-card h3 { font-size: .9rem; font-weight: 700; margin-bottom: 5px; }
+  .flow-card p  { font-size: .8rem; color: var(--gray); line-height: 1.55; }
+  .tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }
+  .tag { font-size: .68rem; font-weight: 600; padding: 2px 8px; border-radius: 9px; border: 1px solid; }
+
+  /* Component cards */
+  .comp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 18px; }
+  .comp-card { background: var(--white); border: 1.5px solid var(--border); border-radius: 12px; padding: 18px; box-shadow: var(--shadow-sm); transition: box-shadow .18s; }
+  .comp-card:hover { box-shadow: var(--shadow); }
+  .comp-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .comp-icon { width: 40px; height: 40px; border-radius: 9px; display: flex; align-items: center; justify-content: center; font-size: 1.3rem; flex-shrink: 0; }
+  .comp-card h3 { font-size: .92rem; font-weight: 700; }
+  .comp-card .tech { font-size: .72rem; color: var(--gray); margin-top: 2px; }
+  .comp-items { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+  .comp-items li { display: flex; align-items: flex-start; gap: 7px; font-size: .8rem; line-height: 1.45; }
+  .comp-items li::before { content: '›'; font-weight: 700; font-size: .88rem; flex-shrink: 0; margin-top: 1px; color: var(--gray); }
+
+  /* Process state */
+  .vars-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 14px; }
+  .vars-card { background: var(--white); border: 1.5px solid var(--border); border-radius: 10px; padding: 14px; box-shadow: var(--shadow-sm); }
+  .vars-card h4 { font-size: .74rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin-bottom: 9px; display: flex; align-items: center; gap: 6px; }
+  .vars-card ul { list-style: none; display: flex; flex-direction: column; gap: 4px; }
+  .vars-card li { display: flex; align-items: baseline; gap: 7px; font-size: .77rem; }
+  .var-name { font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: .72rem; background: #F1F5F9; border-radius: 4px; padding: 1px 5px; color: var(--blue); white-space: nowrap; }
+  .var-desc { color: var(--gray); font-size: .75rem; }
+
+  /* Color helpers */
+  .c-blue   { background: #DBEAFE; color: #1D4ED8; }
+  .c-green  { background: #D1FAE5; color: #065F46; }
+  .c-purple { background: #EDE9FE; color: #5B21B6; }
+  .c-amber  { background: #FEF3C7; color: #92400E; }
+  .c-red    { background: #FEE2E2; color: #991B1B; }
+  .c-teal   { background: #CCFBF1; color: #0F766E; }
+  .b-blue   { border-color: #3B82F6; }
+  .b-green  { border-color: #10B981; }
+  .b-purple { border-color: #8B5CF6; }
+  .b-amber  { border-color: #F59E0B; }
+
+  /* Tooltip */
+  .tt { display: none; position: fixed; background: #1E293B; color: #fff; border-radius: 8px; padding: 9px 13px; font-size: .78rem; max-width: 260px; line-height: 1.5; z-index: 999; pointer-events: none; box-shadow: 0 8px 24px rgba(0,0,0,.25); }
+  .tt.show { display: block; }
+
+  /* Note box */
+  .note { background: #F0FDF4; border: 1px solid #A7F3D0; border-radius: 9px; padding: 13px 16px; font-size: .82rem; color: #065F46; line-height: 1.6; margin-top: 18px; }
+  .note strong { color: var(--green); }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Noisn · Architecture</h1>
+    <p>Danica Pension Configurator — WebSocket + Camunda AI Agent Connector + Spring Boot</p>
+  </div>
+  <span class="badge">v3.0</span>
+</header>
+
+<nav class="tabs">
+  <button class="tab active" onclick="showTab('diagram',this)">Architecture Diagram</button>
+  <button class="tab" onclick="showTab('overview',this)">System Overview</button>
+  <button class="tab" onclick="showTab('flow',this)">Message Flow</button>
+  <button class="tab" onclick="showTab('components',this)">Components</button>
+  <button class="tab" onclick="showTab('state',this)">Process State</button>
+</nav>
+
+
+<!-- ══════════════════════════════════════════════════════
+     TAB 1 · ARCHITECTURE DIAGRAM
+     ══════════════════════════════════════════════════════ -->
+<div id="tab-diagram" class="canvas active">
+
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#3B82F6"></div>Browser</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#D97706"></div>Spring Boot (Session Broker)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#10B981"></div>Camunda 8 / Zeebe</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#EF4444"></div>Spring Boot (Job Workers)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#F59E0B"></div>Spring Boot (Calculator API)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#8B5CF6"></div>AWS (Bedrock Claude + KB)</div>
+    <div class="legend-item" style="margin-left:auto;font-size:.74rem;color:var(--gray)">Hover nodes · Click to highlight</div>
+  </div>
+
+  <div class="diagram-container">
+    <svg viewBox="0 0 1060 620" width="1060" height="620" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arr" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto">
+          <polygon points="0 0,9 3,0 6" fill="#94A3B8"/>
+        </marker>
+        <marker id="arr-b" markerWidth="9" markerHeight="9" refX="0" refY="3" orient="auto">
+          <polygon points="9 0,0 3,9 6" fill="#94A3B8"/>
+        </marker>
+        <marker id="arr-g" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto">
+          <polygon points="0 0,9 3,0 6" fill="#059669"/>
+        </marker>
+        <marker id="arr-p" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto">
+          <polygon points="0 0,9 3,0 6" fill="#7C3AED"/>
+        </marker>
+        <filter id="shadow" x="-5%" y="-5%" width="110%" height="110%">
+          <feDropShadow dx="1" dy="2" stdDeviation="2" flood-opacity="0.08"/>
+        </filter>
+      </defs>
+
+      <!-- ── ZONE BACKGROUNDS ──────────────────────────────── -->
+      <!-- Browser zone -->
+      <rect x="0" y="0" width="1060" height="100" rx="0" fill="#EFF6FF" opacity="0.6"/>
+      <text x="10" y="16" font-size="9" font-weight="700" letter-spacing="2" fill="#93C5FD" text-transform="uppercase">BROWSER</text>
+
+      <!-- Spring Boot zone -->
+      <rect x="0" y="110" width="340" height="105" rx="0" fill="#FFFBEB" opacity="0.7"/>
+      <text x="10" y="125" font-size="9" font-weight="700" letter-spacing="2" fill="#FCD34D">SPRING BOOT · SESSION BROKER</text>
+
+      <!-- Camunda zone -->
+      <rect x="350" y="110" width="710" height="105" rx="0" fill="#ECFDF5" opacity="0.7"/>
+      <text x="360" y="125" font-size="9" font-weight="700" letter-spacing="2" fill="#6EE7B7">CAMUNDA 8 / ZEEBE</text>
+
+      <!-- Workers zone -->
+      <rect x="0" y="225" width="530" height="155" rx="0" fill="#FEF2F2" opacity="0.6"/>
+      <text x="10" y="240" font-size="9" font-weight="700" letter-spacing="2" fill="#FCA5A5">SPRING BOOT · JOB WORKERS (@ZeebeWorker)</text>
+
+      <!-- Calculator + Ad-hoc tool zone -->
+      <rect x="540" y="225" width="520" height="155" rx="0" fill="#F5F3FF" opacity="0.5"/>
+      <text x="550" y="240" font-size="9" font-weight="700" letter-spacing="2" fill="#C4B5FD">CAMUNDA · AD-HOC SUB-PROCESS TOOLS</text>
+
+      <!-- AWS zone -->
+      <rect x="0" y="390" width="1060" height="220" rx="0" fill="#FFF7ED" opacity="0.5"/>
+      <text x="10" y="406" font-size="9" font-weight="700" letter-spacing="2" fill="#FCD34D">AWS</text>
+
+      <!-- ── BROWSER LAYER ─────────────────────────────────── -->
+      <!-- React UI -->
+      <g filter="url(#shadow)">
+        <rect x="400" y="18" width="240" height="68" rx="8" fill="#DBEAFE" stroke="#3B82F6" stroke-width="1.5"/>
+      </g>
+      <text x="520" y="45" font-size="13" font-weight="700" text-anchor="middle" fill="#1D4ED8">React UI</text>
+      <text x="520" y="62" font-size="10" text-anchor="middle" fill="#64748b">Chat + Live Report Panel</text>
+      <text x="520" y="76" font-size="9" text-anchor="middle" fill="#93C5FD">Vite · WebSocket client (native WS)</text>
+
+      <!-- ── SPRING BOOT SESSION BROKER ──────────────────────── -->
+      <g filter="url(#shadow)">
+        <rect x="18" y="132" width="300" height="72" rx="8" fill="#FDE68A" stroke="#D97706" stroke-width="1.5"/>
+      </g>
+      <text x="168" y="157" font-size="13" font-weight="700" text-anchor="middle" fill="#92400E">Session Broker</text>
+      <text x="168" y="173" font-size="10" text-anchor="middle" fill="#92400E">sessionId ↔ processInstanceKey map</text>
+      <text x="168" y="187" font-size="9" text-anchor="middle" fill="#B45309">Spring Boot · spring-websocket · POST /send</text>
+
+      <!-- ── CAMUNDA LAYER ──────────────────────────────────── -->
+      <!-- Zeebe Engine -->
+      <g filter="url(#shadow)">
+        <rect x="368" y="132" width="180" height="72" rx="8" fill="#A7F3D0" stroke="#059669" stroke-width="1.5"/>
+      </g>
+      <text x="458" y="157" font-size="13" font-weight="700" text-anchor="middle" fill="#065F46">Zeebe Engine</text>
+      <text x="458" y="173" font-size="10" text-anchor="middle" fill="#065F46">Process Orchestration</text>
+      <text x="458" y="187" font-size="9" text-anchor="middle" fill="#059669">BPMN 2.0 · gRPC · job distribution</text>
+
+      <!-- AI Agent Connector -->
+      <g filter="url(#shadow)">
+        <rect x="565" y="132" width="230" height="72" rx="8" fill="#EDE9FE" stroke="#7C3AED" stroke-width="2"/>
+      </g>
+      <text x="680" y="155" font-size="13" font-weight="700" text-anchor="middle" fill="#5B21B6">AI Agent Connector</text>
+      <text x="680" y="171" font-size="10" text-anchor="middle" fill="#5B21B6">Manages LLM reasoning loop natively</text>
+      <text x="680" y="185" font-size="9" text-anchor="middle" fill="#7C3AED">Camunda built-in · Bedrock · max 10 calls/entry</text>
+
+      <!-- BPMN Process -->
+      <g filter="url(#shadow)">
+        <rect x="813" y="132" width="225" height="72" rx="8" fill="#A7F3D0" stroke="#059669" stroke-width="1.5"/>
+      </g>
+      <text x="925" y="155" font-size="13" font-weight="700" text-anchor="middle" fill="#065F46">BPMN Process</text>
+      <text x="925" y="171" font-size="10" text-anchor="middle" fill="#065F46">pension-configurator.bpmn</text>
+      <text x="925" y="185" font-size="9" text-anchor="middle" fill="#059669">Ad-hoc sub-process · message events</text>
+
+      <!-- ── WORKERS LAYER ──────────────────────────────────── -->
+      <!-- send-to-ui worker -->
+      <g filter="url(#shadow)">
+        <rect x="18" y="253" width="155" height="110" rx="8" fill="#FEE2E2" stroke="#EF4444" stroke-width="1.5"/>
+      </g>
+      <text x="96" y="275" font-size="11" font-weight="700" text-anchor="middle" fill="#991B1B">send-to-ui</text>
+      <text x="96" y="290" font-size="9" text-anchor="middle" fill="#991B1B">@ZeebeWorker</text>
+      <text x="96" y="308" font-size="9" text-anchor="middle" fill="#64748b">Receives toolCall payload</text>
+      <text x="96" y="320" font-size="9" text-anchor="middle" fill="#64748b">POST /send → Broker</text>
+      <text x="96" y="332" font-size="9" text-anchor="middle" fill="#64748b">Returns: "delivered"</text>
+      <text x="96" y="350" font-size="8" text-anchor="middle" fill="#94A3B8">Spring Boot</text>
+
+      <!-- run-simulation worker -->
+      <g filter="url(#shadow)">
+        <rect x="188" y="253" width="155" height="110" rx="8" fill="#FEE2E2" stroke="#EF4444" stroke-width="1.5"/>
+      </g>
+      <text x="265" y="275" font-size="11" font-weight="700" text-anchor="middle" fill="#991B1B">run-simulation</text>
+      <text x="265" y="290" font-size="9" text-anchor="middle" fill="#991B1B">@ZeebeWorker</text>
+      <text x="265" y="308" font-size="9" text-anchor="middle" fill="#64748b">Receives toolCall (profile)</text>
+      <text x="265" y="320" font-size="9" text-anchor="middle" fill="#64748b">POST /simulate → Calculator</text>
+      <text x="265" y="332" font-size="9" text-anchor="middle" fill="#64748b">Returns: simulation JSON</text>
+      <text x="265" y="350" font-size="8" text-anchor="middle" fill="#94A3B8">Spring Boot</text>
+
+      <!-- search-kb worker -->
+      <g filter="url(#shadow)">
+        <rect x="358" y="253" width="155" height="110" rx="8" fill="#FEE2E2" stroke="#EF4444" stroke-width="1.5"/>
+      </g>
+      <text x="435" y="275" font-size="11" font-weight="700" text-anchor="middle" fill="#991B1B">search-kb</text>
+      <text x="435" y="290" font-size="9" text-anchor="middle" fill="#991B1B">@ZeebeWorker</text>
+      <text x="435" y="308" font-size="9" text-anchor="middle" fill="#64748b">Receives toolCall.query</text>
+      <text x="435" y="320" font-size="9" text-anchor="middle" fill="#64748b">retrieve_and_generate → KB</text>
+      <text x="435" y="332" font-size="9" text-anchor="middle" fill="#64748b">Returns: answer text</text>
+      <text x="435" y="350" font-size="8" text-anchor="middle" fill="#94A3B8">Spring Boot</text>
+
+      <!-- ── AD-HOC TOOL TASKS (Camunda side) ──────────────── -->
+      <!-- send-to-ui task -->
+      <g filter="url(#shadow)">
+        <rect x="558" y="253" width="140" height="110" rx="8" fill="#D1FAE5" stroke="#10B981" stroke-width="1.5" stroke-dasharray="5,3"/>
+      </g>
+      <text x="628" y="275" font-size="11" font-weight="700" text-anchor="middle" fill="#065F46">send-to-ui</text>
+      <text x="628" y="290" font-size="9" text-anchor="middle" fill="#065F46">Service Task</text>
+      <text x="628" y="308" font-size="9" text-anchor="middle" fill="#64748b">type: send-to-ui</text>
+      <text x="628" y="322" font-size="9" text-anchor="middle" fill="#64748b">activated by</text>
+      <text x="628" y="334" font-size="9" text-anchor="middle" fill="#64748b">AI connector</text>
+      <text x="628" y="350" font-size="8" text-anchor="middle" fill="#94A3B8">Zeebe job</text>
+
+      <!-- run-simulation task -->
+      <g filter="url(#shadow)">
+        <rect x="713" y="253" width="140" height="110" rx="8" fill="#D1FAE5" stroke="#10B981" stroke-width="1.5" stroke-dasharray="5,3"/>
+      </g>
+      <text x="783" y="275" font-size="11" font-weight="700" text-anchor="middle" fill="#065F46">run-simulation</text>
+      <text x="783" y="290" font-size="9" text-anchor="middle" fill="#065F46">Service Task</text>
+      <text x="783" y="308" font-size="9" text-anchor="middle" fill="#64748b">type: run-simulation</text>
+      <text x="783" y="322" font-size="9" text-anchor="middle" fill="#64748b">activated by</text>
+      <text x="783" y="334" font-size="9" text-anchor="middle" fill="#64748b">AI connector</text>
+      <text x="783" y="350" font-size="8" text-anchor="middle" fill="#94A3B8">Zeebe job</text>
+
+      <!-- search-kb task -->
+      <g filter="url(#shadow)">
+        <rect x="868" y="253" width="140" height="110" rx="8" fill="#D1FAE5" stroke="#10B981" stroke-width="1.5" stroke-dasharray="5,3"/>
+      </g>
+      <text x="938" y="275" font-size="11" font-weight="700" text-anchor="middle" fill="#065F46">search-kb</text>
+      <text x="938" y="290" font-size="9" text-anchor="middle" fill="#065F46">Service Task</text>
+      <text x="938" y="308" font-size="9" text-anchor="middle" fill="#64748b">type: search-kb</text>
+      <text x="938" y="322" font-size="9" text-anchor="middle" fill="#64748b">activated by</text>
+      <text x="938" y="334" font-size="9" text-anchor="middle" fill="#64748b">AI connector</text>
+      <text x="938" y="350" font-size="8" text-anchor="middle" fill="#94A3B8">Zeebe job</text>
+
+      <!-- ── AWS LAYER ──────────────────────────────────────── -->
+      <!-- Bedrock Claude -->
+      <g filter="url(#shadow)">
+        <rect x="18" y="415" width="200" height="80" rx="8" fill="#EDE9FE" stroke="#7C3AED" stroke-width="1.5"/>
+      </g>
+      <text x="118" y="443" font-size="13" font-weight="700" text-anchor="middle" fill="#5B21B6">Bedrock</text>
+      <text x="118" y="459" font-size="11" text-anchor="middle" fill="#5B21B6">Claude 3.5 Sonnet</text>
+      <text x="118" y="474" font-size="9" text-anchor="middle" fill="#7C3AED">Called by AI Agent Connector</text>
+      <text x="118" y="487" font-size="8" text-anchor="middle" fill="#94A3B8">anthropic.claude-3-5-sonnet-20241022-v2:0</text>
+
+      <!-- Calculator API (Spring Boot) -->
+      <g filter="url(#shadow)">
+        <rect x="265" y="415" width="200" height="80" rx="8" fill="#FEF3C7" stroke="#F59E0B" stroke-width="1.5"/>
+      </g>
+      <text x="365" y="443" font-size="13" font-weight="700" text-anchor="middle" fill="#92400E">Calculator API</text>
+      <text x="365" y="459" font-size="10" text-anchor="middle" fill="#92400E">POST /simulate · POST /eligibility</text>
+      <text x="365" y="474" font-size="9" text-anchor="middle" fill="#B45309">Called by run-simulation worker</text>
+      <text x="365" y="487" font-size="8" text-anchor="middle" fill="#94A3B8">Spring Boot · Spring MVC · stateless</text>
+
+      <!-- Bedrock Knowledge Base -->
+      <g filter="url(#shadow)">
+        <rect x="512" y="415" width="200" height="80" rx="8" fill="#EDE9FE" stroke="#7C3AED" stroke-width="1.5"/>
+      </g>
+      <text x="612" y="443" font-size="13" font-weight="700" text-anchor="middle" fill="#5B21B6">Knowledge Base</text>
+      <text x="612" y="459" font-size="10" text-anchor="middle" fill="#5B21B6">Bedrock KB · RAG</text>
+      <text x="612" y="474" font-size="9" text-anchor="middle" fill="#7C3AED">Called by search-kb worker</text>
+      <text x="612" y="487" font-size="8" text-anchor="middle" fill="#94A3B8">Titan Embeddings v2 · hybrid search</text>
+
+      <!-- Camunda Operate (observation) -->
+      <g filter="url(#shadow)">
+        <rect x="760" y="415" width="278" height="80" rx="8" fill="#CCFBF1" stroke="#0D9488" stroke-width="1.5"/>
+      </g>
+      <text x="899" y="443" font-size="13" font-weight="700" text-anchor="middle" fill="#0F766E">Camunda Operate</text>
+      <text x="899" y="459" font-size="10" text-anchor="middle" fill="#0F766E">Process instance visibility</text>
+      <text x="899" y="474" font-size="9" text-anchor="middle" fill="#0D9488">AgentContext · token metrics · audit trail</text>
+      <text x="899" y="487" font-size="8" text-anchor="middle" fill="#94A3B8">Camunda Cloud console</text>
+
+      <!-- ── ARROWS ──────────────────────────────────────────── -->
+
+      <!-- 1. React UI ↔ Session Broker (WebSocket) -->
+      <line x1="470" y1="86" x2="250" y2="132" stroke="#D97706" stroke-width="1.8" marker-end="url(#arr)"/>
+      <line x1="220" y1="132" x2="440" y2="86" stroke="#D97706" stroke-width="1.8" marker-end="url(#arr)"/>
+      <rect x="308" y="99" width="104" height="18" rx="4" fill="#FFFBEB" stroke="#FCD34D" stroke-width="1"/>
+      <text x="360" y="112" font-size="9" text-anchor="middle" fill="#92400E">WebSocket ↕ STOMP</text>
+
+      <!-- 2. Session Broker ↔ Zeebe Engine (createProcessInstance / publishMessage) -->
+      <line x1="318" y1="168" x2="368" y2="168" stroke="#059669" stroke-width="1.8" marker-end="url(#arr)"/>
+      <line x1="368" y1="180" x2="318" y2="180" stroke="#059669" stroke-width="1.8" marker-end="url(#arr)"/>
+      <rect x="312" y="156" width="62" height="16" rx="3" fill="#ECFDF5" stroke="#A7F3D0" stroke-width="1"/>
+      <text x="343" y="168" font-size="8" text-anchor="middle" fill="#065F46">REST API</text>
+
+      <!-- 3. AI Agent Connector → Bedrock Claude (LLM calls) -->
+      <line x1="680" y1="204" x2="118" y2="415" stroke="#7C3AED" stroke-width="1.8" stroke-dasharray="6,3" marker-end="url(#arr-p)"/>
+      <rect x="310" y="298" width="115" height="16" rx="3" fill="#F5F3FF" stroke="#C4B5FD" stroke-width="1"/>
+      <text x="367" y="310" font-size="8" text-anchor="middle" fill="#5B21B6">Bedrock Converse API</text>
+
+      <!-- 4. AI Agent Connector → Tool Tasks (activateElement) -->
+      <line x1="628" y1="204" x2="628" y2="253" stroke="#059669" stroke-width="1.5" marker-end="url(#arr-g)"/>
+      <line x1="783" y1="204" x2="783" y2="253" stroke="#059669" stroke-width="1.5" marker-end="url(#arr-g)"/>
+      <line x1="938" y1="204" x2="938" y2="253" stroke="#059669" stroke-width="1.5" marker-end="url(#arr-g)"/>
+      <text x="680" y="243" font-size="8" text-anchor="middle" fill="#059669">activateElement(toolName)</text>
+
+      <!-- 5. Tool tasks → Workers (gRPC job subscription) - showing cross-zone -->
+      <!-- send-to-ui task → worker -->
+      <path d="M 628,363 L 628,385 L 96,385 L 96,363" fill="none" stroke="#94A3B8" stroke-width="1.2" stroke-dasharray="4,2"/>
+      <rect x="300" y="376" width="65" height="15" rx="3" fill="#fff" stroke="#CBD5E1"/>
+      <text x="332" y="387" font-size="8" text-anchor="middle" fill="#64748b">gRPC job</text>
+
+      <!-- run-simulation task → worker -->
+      <path d="M 783,363 L 783,393 L 265,393 L 265,363" fill="none" stroke="#94A3B8" stroke-width="1.2" stroke-dasharray="4,2"/>
+
+      <!-- search-kb task → worker -->
+      <path d="M 938,363 L 938,400 L 435,400 L 435,363" fill="none" stroke="#94A3B8" stroke-width="1.2" stroke-dasharray="4,2"/>
+
+      <!-- 6. send-to-ui worker → Session Broker (POST /send) -->
+      <line x1="96" y1="363" x2="96" y2="412" stroke="#D97706" stroke-width="1.5" marker-end="url(#arr)"/>
+      <text x="104" y="393" font-size="8" fill="#B45309">POST /send</text>
+
+      <!-- (visual: Bedrock arrow) from the node itself -->
+      <line x1="118" y1="495" x2="118" y2="520" stroke="#7C3AED" stroke-width="1" stroke-dasharray="4,2"/>
+
+      <!-- 7. run-simulation worker → Calculator API -->
+      <line x1="265" y1="363" x2="365" y2="415" stroke="#F59E0B" stroke-width="1.5" marker-end="url(#arr)"/>
+      <rect x="275" y="390" width="80" height="15" rx="3" fill="#FFFBEB" stroke="#FCD34D"/>
+      <text x="315" y="401" font-size="8" text-anchor="middle" fill="#92400E">POST /simulate</text>
+
+      <!-- 8. search-kb worker → Bedrock KB -->
+      <line x1="435" y1="363" x2="580" y2="415" stroke="#7C3AED" stroke-width="1.5" stroke-dasharray="5,2" marker-end="url(#arr-p)"/>
+      <rect x="467" y="388" width="82" height="15" rx="3" fill="#F5F3FF" stroke="#C4B5FD"/>
+      <text x="508" y="399" font-size="8" text-anchor="middle" fill="#5B21B6">retrieve_and_generate</text>
+
+    </svg>
+  </div>
+
+  <div class="note">
+    <strong>Key design facts:</strong>
+    The Camunda <strong>AI Agent Connector</strong> manages the LLM reasoning loop natively — it calls <strong>Bedrock Claude</strong> directly. Workers contain <strong>zero LLM logic</strong>. The <strong>Session Broker</strong> (Spring Boot) maintains the <code>sessionId ↔ processInstanceKey</code> map and is the only stateful component. The <code>send-to-ui</code> worker calls the broker's <code>POST /send</code> to route messages to the correct WebSocket. Message correlation from UI uses Camunda <code>publishMessage(user_input_received, processInstanceKey)</code>.
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════════════
+     TAB 2 · SYSTEM OVERVIEW
+     ══════════════════════════════════════════════════════ -->
+<div id="tab-overview" class="canvas">
+
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#3B82F6"></div>Browser</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#D97706"></div>Spring Boot</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#10B981"></div>Camunda</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#8B5CF6"></div>AI / AWS</div>
+    <div class="legend-item" style="margin-left:auto;font-size:.74rem;color:var(--gray)">Hover nodes for details</div>
+  </div>
+
+  <div class="layers">
+
+    <div class="layer l-browser">
+      <span class="layer-label">Browser</span>
+      <div class="nodes">
+        <div class="node" data-tip="React 18 + Vite SPA. Opens a WebSocket connection to the Session Broker on load. Sends user messages as JSON frames. Receives typed server frames: question, agent_message, summary, report, report_final." onclick="hl(this)">
+          <div class="node-icon c-blue">⚛️</div>
+          <div><div>React UI</div><div style="font-size:.7rem;color:#64748b">Chat + Live Report · WebSocket client</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="arrow-row">
+      <div class="arrow-col"><div class="arrow-pip">WebSocket ↕ STOMP frames</div><div class="arrow-line"></div></div>
+    </div>
+
+    <div class="layer l-broker">
+      <span class="layer-label">Spring Boot · Session Broker</span>
+      <div class="nodes">
+        <div class="node" data-tip="Stateful WebSocket server. Assigns each browser connection a sessionId. On start_session frame: calls Camunda REST POST /v2/process-instances, stores processInstanceKey → sessionId mapping. On user_message: calls publishMessage(user_input_received, processInstanceKey). Exposes internal POST /send for workers to push messages to UI." onclick="hl(this)">
+          <div class="node-icon c-amber">🔁</div>
+          <div><div>Session Broker</div><div style="font-size:.7rem;color:#64748b">sessionId ↔ processInstanceKey · spring-websocket</div></div>
+        </div>
+        <div class="node" data-tip="Internal HTTP endpoint exposed by the Session Broker. Called by the send-to-ui job worker with { processInstanceKey, messageType, payload }. Resolves the correct WebSocket connection and pushes the frame to the browser. Returns 404 if session disconnected (worker still completes job)." onclick="hl(this)">
+          <div class="node-icon c-amber">📮</div>
+          <div><div>POST /send endpoint</div><div style="font-size:.7rem;color:#64748b">Internal · called by send-to-ui worker</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="arrow-row">
+      <div class="arrow-col"><div class="arrow-pip">REST: createProcessInstance / publishMessage</div><div class="arrow-line"></div></div>
+      <div class="arrow-col"><div class="arrow-pip">gRPC: job activation (spring-zeebe)</div><div class="arrow-line"></div></div>
+    </div>
+
+    <div class="layer l-camunda">
+      <span class="layer-label">Camunda 8 / Zeebe</span>
+      <div class="nodes">
+        <div class="node" data-tip="Camunda 8 Cloud process engine. Manages pension-configurator.bpmn. All session state stored as process variables. Message correlation key = processInstanceKey. Full audit trail in Camunda Operate including AgentContext metrics (token usage)." onclick="hl(this)">
+          <div class="node-icon c-green">⚙️</div>
+          <div><div>Zeebe Engine</div><div style="font-size:.7rem;color:#64748b">BPMN 2.0 · gRPC · process variables</div></div>
+        </div>
+        <div class="node" data-tip="Camunda built-in element template. Applied to the ad-hoc sub-process. Manages the LLM → tool-call → result → LLM loop internally. Calls Bedrock Converse API directly. Resolves tools by auto-discovering the service tasks inside the ad-hoc sub-process. Max 10 LLM calls per sub-process entry." onclick="hl(this)">
+          <div class="node-icon c-purple">🤖</div>
+          <div><div>AI Agent Connector</div><div style="font-size:.7rem;color:#64748b">Built-in · calls Bedrock · manages loop</div></div>
+        </div>
+        <div class="node" data-tip="pension-configurator.bpmn: Start → init-context script task → Ad-hoc Sub-process (AI Agent Connector applied, contains 3 tool tasks + non-interrupting Message Receive Event) → End. Correlation key: processInstanceKey." onclick="hl(this)">
+          <div class="node-icon c-green">📋</div>
+          <div><div>BPMN Process</div><div style="font-size:.7rem;color:#64748b">pension-configurator.bpmn</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="arrow-row">
+      <div class="arrow-col"><div class="arrow-pip">Bedrock Converse API</div><div class="arrow-line"></div></div>
+      <div class="arrow-col"><div class="arrow-pip">POST /simulate (Spring MVC)</div><div class="arrow-line"></div></div>
+      <div class="arrow-col"><div class="arrow-pip">retrieve_and_generate (AWS SDK)</div><div class="arrow-line"></div></div>
+    </div>
+
+    <div class="layer l-workers">
+      <span class="layer-label">Spring Boot · Job Workers + Calculator</span>
+      <div class="nodes">
+        <div class="node" data-tip="@ZeebeWorker task type 'send-to-ui'. Receives toolCall { messageType, content } from Zeebe. Calls Session Broker POST /send with processInstanceKey. Completes job immediately with toolCallResult='delivered'. No LLM logic." onclick="hl(this)">
+          <div class="node-icon c-red">📤</div>
+          <div><div>send-to-ui worker</div><div style="font-size:.7rem;color:#64748b">@ZeebeWorker · routes to Session Broker</div></div>
+        </div>
+        <div class="node" data-tip="@ZeebeWorker task type 'run-simulation'. Receives toolCall with user profile fields. Maps to POST /simulate on Calculator API. Returns simulation JSON as toolCallResult string. No LLM logic." onclick="hl(this)">
+          <div class="node-icon c-red">🧮</div>
+          <div><div>run-simulation worker</div><div style="font-size:.7rem;color:#64748b">@ZeebeWorker · calls Calculator API</div></div>
+        </div>
+        <div class="node" data-tip="@ZeebeWorker task type 'search-kb'. Receives toolCall.query. Calls Bedrock Knowledge Base via retrieve_and_generate (AWS SDK Java). Returns answer text as toolCallResult. No LLM logic." onclick="hl(this)">
+          <div class="node-icon c-red">🔍</div>
+          <div><div>search-kb worker</div><div style="font-size:.7rem;color:#64748b">@ZeebeWorker · calls Bedrock KB</div></div>
+        </div>
+        <div class="node" data-tip="Spring Boot REST API. Stateless pension calculation. POST /simulate (pension projection + coverage premiums), POST /eligibility (rule-based cover eligibility), GET /products/{code}/defaults. Called only by run-simulation worker." onclick="hl(this)">
+          <div class="node-icon c-amber">📊</div>
+          <div><div>Calculator API</div><div style="font-size:.7rem;color:#64748b">Spring MVC · /simulate · /eligibility</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="arrow-row">
+      <div class="arrow-col"><div class="arrow-pip">AWS SDK Java</div><div class="arrow-line"></div></div>
+    </div>
+
+    <div class="layer l-aws">
+      <span class="layer-label">AWS</span>
+      <div class="nodes">
+        <div class="node" data-tip="Claude 3.5 Sonnet on AWS Bedrock. Called directly by Camunda AI Agent Connector via Bedrock Converse API. Spring Boot never calls Bedrock Claude directly." onclick="hl(this)">
+          <div class="node-icon c-purple">🧠</div>
+          <div><div>Bedrock Claude 3.5</div><div style="font-size:.7rem;color:#64748b">anthropic.claude-3-5-sonnet-20241022-v2:0</div></div>
+        </div>
+        <div class="node" data-tip="Bedrock Knowledge Base. Product documentation (DANICA_BALANCE, DANICA_LINK), advisor guide book, eligibility rules. Vector-indexed with Titan Embeddings v2. Called via retrieve_and_generate by the search-kb Spring worker." onclick="hl(this)">
+          <div class="node-icon c-purple">📚</div>
+          <div><div>Knowledge Base</div><div style="font-size:.7rem;color:#64748b">Titan Embeddings v2 · hybrid search</div></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════════════
+     TAB 3 · MESSAGE FLOW
+     ══════════════════════════════════════════════════════ -->
+<div id="tab-flow" class="canvas">
+  <div class="flow">
+
+    <div class="flow-step">
+      <div class="step-num c-blue b-blue">1</div>
+      <div class="flow-card">
+        <h3>Session Start</h3>
+        <p>Browser opens WebSocket to Session Broker. UI sends <code>{type:"start_session", product:"DANICA_BALANCE"}</code>. Broker calls Camunda REST <code>POST /v2/process-instances</code>, stores <code>sessionId → processInstanceKey</code>, returns <code>{type:"session_ready", processInstanceKey}</code>.</p>
+        <div class="tags"><span class="tag c-blue">React UI</span><span class="tag c-amber">Session Broker</span><span class="tag c-green">Camunda REST</span></div>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="step-num c-green b-green">2</div>
+      <div class="flow-card">
+        <h3>Process Initialisation</h3>
+        <p>Camunda runs the init-context script task — sets default product variables, binds sessionId. The ad-hoc sub-process activates and the AI Agent Connector job is created for Zeebe.</p>
+        <div class="tags"><span class="tag c-green">BPMN init-context</span><span class="tag c-green">Zeebe</span></div>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="step-num c-purple b-purple">3</div>
+      <div class="flow-card">
+        <h3>AI Agent Connector starts reasoning</h3>
+        <p>Connector assembles system prompt + initial user message, calls Bedrock Claude. Claude responds with a tool call: <code>send-to-ui {messageType:"question", content:"What is your age?"}</code>. Connector activates the <code>send-to-ui</code> service task inside the ad-hoc sub-process.</p>
+        <div class="tags"><span class="tag c-purple">AI Agent Connector</span><span class="tag c-purple">Bedrock Claude</span></div>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="step-num c-red b-red" style="border-color:#EF4444">4</div>
+      <div class="flow-card">
+        <h3>send-to-ui worker pushes question to UI</h3>
+        <p>Spring Boot <code>@ZeebeWorker</code> picks up the <code>send-to-ui</code> job. Calls Session Broker <code>POST /send</code> with <code>processInstanceKey</code> + payload. Broker pushes WebSocket frame <code>{type:"question", content:"What is your age?"}</code> to browser. Worker completes job with <code>toolCallResult:"delivered"</code>.</p>
+        <div class="tags"><span class="tag c-red">send-to-ui worker</span><span class="tag c-amber">Session Broker</span><span class="tag c-blue">React UI</span></div>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="step-num c-blue b-blue">5</div>
+      <div class="flow-card">
+        <h3>User replies → Message Correlation</h3>
+        <p>User types answer in React UI. UI sends <code>{type:"user_message", content:"I am 42"}</code> via WebSocket. Broker calls <code>publishMessage("user_input_received", correlationKey=processInstanceKey, variables:{userMessage:"I am 42"})</code>. Message is injected into AgentContext as an event message. New connector job created in Zeebe.</p>
+        <div class="tags"><span class="tag c-blue">React UI</span><span class="tag c-amber">Session Broker</span><span class="tag c-green">Camunda publishMessage</span></div>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="step-num c-purple b-purple">6</div>
+      <div class="flow-card">
+        <h3>AI loop continues (intake → simulation → iterate)</h3>
+        <p>Connector calls Claude again with <code>eventMessage:"I am 42"</code>. Claude continues collecting information (salary, retirement age, contribution, risk profile). When ready, calls <code>run-simulation</code> tool. Spring worker calls Calculator API <code>POST /simulate</code>. Result returned as <code>toolCallResult</code>. Claude then calls <code>send-to-ui {type:"summary"}</code> to display results.</p>
+        <div class="tags"><span class="tag c-purple">AI Agent Connector</span><span class="tag c-red">run-simulation worker</span><span class="tag c-amber">Calculator API</span></div>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="step-num c-purple b-purple">7</div>
+      <div class="flow-card">
+        <h3>Knowledge Base queries</h3>
+        <p>When user asks a product question ("What does critical illness cover include?"), Claude calls <code>search-kb {query:"..."}</code> tool. Spring worker calls Bedrock Knowledge Base <code>retrieve_and_generate</code>. Answer returned as <code>toolCallResult</code>. Claude formulates response, calls <code>send-to-ui {type:"agent_message"}</code>.</p>
+        <div class="tags"><span class="tag c-red">search-kb worker</span><span class="tag c-purple">Bedrock KB</span></div>
+      </div>
+    </div>
+
+    <div class="flow-step">
+      <div class="step-num c-green b-green">8</div>
+      <div class="flow-card">
+        <h3>Session End</h3>
+        <p>User confirms. Claude sends <code>send-to-ui {type:"report_final"}</code>. No further tool calls → <code>completionConditionFulfilled=true</code> → ad-hoc sub-process ends. Session Broker removes sessionId from map. UI receives <code>{type:"session_complete"}</code>.</p>
+        <div class="tags"><span class="tag c-green">BPMN End</span><span class="tag c-amber">Session Broker cleanup</span><span class="tag c-blue">React report screen</span></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════════════
+     TAB 4 · COMPONENTS
+     ══════════════════════════════════════════════════════ -->
+<div id="tab-components" class="canvas">
+  <div class="comp-grid">
+
+    <div class="comp-card">
+      <div class="comp-header"><div class="comp-icon c-blue">⚛️</div>
+        <div><h3>React UI</h3><div class="tech">ui/ · React 18.3 · Vite 5.4</div></div>
+      </div>
+      <ul class="comp-items">
+        <li>WebSocket client (native WS API, no library needed)</li>
+        <li>useSessionSocket hook: open/resume/send/close lifecycle</li>
+        <li>Dispatcher routes frames: question → chat, summary → summary card, report → live report panel</li>
+        <li>ReplacementGauge — 80% salary replacement visual</li>
+        <li>Reconnect/resume: stores processInstanceKey for resume_session frame</li>
+      </ul>
+    </div>
+
+    <div class="comp-card">
+      <div class="comp-header"><div class="comp-icon c-amber">🔁</div>
+        <div><h3>Session Broker</h3><div class="tech">Spring Boot · spring-websocket · STOMP</div></div>
+      </div>
+      <ul class="comp-items">
+        <li>WebSocket server, assigns sessionId per connection</li>
+        <li>start_session → createProcessInstance → store sessionId→PIK map</li>
+        <li>user_message → publishMessage("user_input_received", PIK, vars)</li>
+        <li>resume_session → re-associate WebSocket with existing PIK</li>
+        <li>Internal POST /send: lookup PIK → push frame to WebSocket</li>
+        <li>Only stateful component (can use Redis for horizontal scale)</li>
+      </ul>
+    </div>
+
+    <div class="comp-card">
+      <div class="comp-header"><div class="comp-icon c-green">⚙️</div>
+        <div><h3>Camunda 8 / Zeebe</h3><div class="tech">Camunda Cloud · BPMN 2.0 · gRPC</div></div>
+      </div>
+      <ul class="comp-items">
+        <li>Hosts pension-configurator.bpmn process definition</li>
+        <li>All session state as durable process variables in Zeebe</li>
+        <li>Distributes jobs to Spring workers via gRPC</li>
+        <li>Message correlation: user_input_received + processInstanceKey</li>
+        <li>AI Agent Connector job worker (agenticai-aiagent-job-worker variant)</li>
+        <li>Full audit trail in Camunda Operate</li>
+      </ul>
+    </div>
+
+    <div class="comp-card">
+      <div class="comp-header"><div class="comp-icon c-purple">🤖</div>
+        <div><h3>AI Agent Connector</h3><div class="tech">Camunda built-in · Bedrock · Claude 3.5</div></div>
+      </div>
+      <ul class="comp-items">
+        <li>Applied as element template to the ad-hoc sub-process</li>
+        <li>Calls Bedrock Converse API; manages LLM→tool→result loop</li>
+        <li>Auto-discovers 3 tools from service tasks in ad-hoc sub-process</li>
+        <li>In-process memory: conversation stored in AgentContext (Zeebe variable)</li>
+        <li>Max 10 LLM calls per entry; configurable sliding window</li>
+        <li>completionConditionFulfilled=true when LLM returns no tool calls</li>
+      </ul>
+    </div>
+
+    <div class="comp-card">
+      <div class="comp-header"><div class="comp-icon c-red">🔧</div>
+        <div><h3>Spring Job Workers</h3><div class="tech">Spring Boot · camunda-zeebe-spring-boot-starter</div></div>
+      </div>
+      <ul class="comp-items">
+        <li><code>@ZeebeWorker</code> — 3 workers, zero LLM logic</li>
+        <li>send-to-ui: routes toolCall payload to Session Broker /send</li>
+        <li>run-simulation: maps toolCall to Calculator API POST /simulate</li>
+        <li>search-kb: calls Bedrock KB retrieve_and_generate (AWS SDK Java)</li>
+        <li>Each returns toolCallResult string; Zeebe delivers to connector</li>
+      </ul>
+    </div>
+
+    <div class="comp-card">
+      <div class="comp-header"><div class="comp-icon c-amber">📊</div>
+        <div><h3>Calculator API</h3><div class="tech">Spring Boot · Spring MVC · stateless</div></div>
+      </div>
+      <ul class="comp-items">
+        <li>POST /simulate — pension projection + coverage premiums</li>
+        <li>POST /eligibility — rule-based cover eligibility flags</li>
+        <li>GET /products/{code}/defaults — product defaults</li>
+        <li>Stateless — no persistence, pure calculation (FV, annuity, premiums)</li>
+        <li>Called only by run-simulation Spring worker</li>
+      </ul>
+    </div>
+
+    <div class="comp-card">
+      <div class="comp-header"><div class="comp-icon c-purple">🧠</div>
+        <div><h3>AWS Bedrock (Claude)</h3><div class="tech">AWS · Converse API · Guardrails</div></div>
+      </div>
+      <ul class="comp-items">
+        <li>Claude 3.5 Sonnet: <code>anthropic.claude-3-5-sonnet-20241022-v2:0</code></li>
+        <li>Called directly by Camunda AI Agent Connector (not Spring Boot)</li>
+        <li>Bedrock Guardrails enforce grounding on every response</li>
+        <li>AgentContext.metrics tracks input/output tokens per session</li>
+      </ul>
+    </div>
+
+    <div class="comp-card">
+      <div class="comp-header"><div class="comp-icon c-purple">📚</div>
+        <div><h3>Bedrock Knowledge Base</h3><div class="tech">AWS · Titan Embeddings v2 · RAG</div></div>
+      </div>
+      <ul class="comp-items">
+        <li>Product documentation (DANICA_BALANCE, DANICA_LINK)</li>
+        <li>Pension advisor guide book + eligibility rules</li>
+        <li>Hybrid search: semantic + keyword (vector index)</li>
+        <li>Called via retrieve_and_generate by search-kb Spring worker</li>
+        <li>Not called by AI Agent Connector — KB access goes through worker</li>
+      </ul>
+    </div>
+
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════════════
+     TAB 5 · PROCESS STATE
+     ══════════════════════════════════════════════════════ -->
+<div id="tab-state" class="canvas">
+
+  <p style="color:var(--gray);font-size:.82rem;margin-bottom:18px">All state is stored as Camunda process variables in Zeebe — no database required. The AI Agent Connector additionally stores conversation history in <code>AgentContext</code> as a Zeebe variable.</p>
+
+  <div class="vars-grid">
+
+    <div class="vars-card">
+      <h4><span>🔗</span> Session Context</h4>
+      <ul>
+        <li><span class="var-name">processInstanceKey</span><span class="var-desc">Zeebe ID · correlation key</span></li>
+        <li><span class="var-name">sessionId</span><span class="var-desc">Browser session identifier</span></li>
+        <li><span class="var-name">productCode</span><span class="var-desc">DANICA_BALANCE / DANICA_LINK</span></li>
+        <li><span class="var-name">sessionStartedAt</span><span class="var-desc">ISO timestamp</span></li>
+        <li><span class="var-name">consentGiven</span><span class="var-desc">GDPR flag</span></li>
+      </ul>
+    </div>
+
+    <div class="vars-card">
+      <h4><span>👤</span> User Profile</h4>
+      <ul>
+        <li><span class="var-name">age</span><span class="var-desc">integer</span></li>
+        <li><span class="var-name">annualSalary</span><span class="var-desc">DKK/year</span></li>
+        <li><span class="var-name">employmentStatus</span><span class="var-desc">EMPLOYED / SELF_EMPLOYED</span></li>
+        <li><span class="var-name">desiredRetirementAge</span><span class="var-desc">integer</span></li>
+        <li><span class="var-name">monthlyContribution</span><span class="var-desc">DKK/month</span></li>
+        <li><span class="var-name">riskProfile</span><span class="var-desc">LOW / MEDIUM / HIGH</span></li>
+        <li><span class="var-name">payoutType</span><span class="var-desc">LUMP_SUM / ANNUITY / etc.</span></li>
+      </ul>
+    </div>
+
+    <div class="vars-card">
+      <h4><span>📊</span> Simulation Results</h4>
+      <ul>
+        <li><span class="var-name">projectedPensionMonthlyDKK</span><span class="var-desc">computed</span></li>
+        <li><span class="var-name">salaryReplacementPct</span><span class="var-desc">0–100% · target 80%</span></li>
+        <li><span class="var-name">totalMonthlyPremiumDKK</span><span class="var-desc">DKK/month</span></li>
+        <li><span class="var-name">coverageBreakdown</span><span class="var-desc">itemised JSON</span></li>
+        <li><span class="var-name">simulationHistory</span><span class="var-desc">array of all runs</span></li>
+        <li><span class="var-name">reachesTarget</span><span class="var-desc">boolean</span></li>
+      </ul>
+    </div>
+
+    <div class="vars-card">
+      <h4><span>🤖</span> Agent Context</h4>
+      <ul>
+        <li><span class="var-name">agentContext</span><span class="var-desc">Managed by AI Connector</span></li>
+        <li><span class="var-name">  .state</span><span class="var-desc">READY / WAITING / COMPLETE</span></li>
+        <li><span class="var-name">  .conversation</span><span class="var-desc">sliding window (40 messages)</span></li>
+        <li><span class="var-name">  .metrics.modelCalls</span><span class="var-desc">integer</span></li>
+        <li><span class="var-name">  .metrics.inputTokens</span><span class="var-desc">integer</span></li>
+        <li><span class="var-name">  .toolDefinitions</span><span class="var-desc">auto-discovered</span></li>
+        <li><span class="var-name">userMessage</span><span class="var-desc">latest from publishMessage</span></li>
+      </ul>
+    </div>
+
+    <div class="vars-card">
+      <h4><span>🔔</span> Message Events</h4>
+      <ul>
+        <li><span class="var-name">user_input_received</span><span class="var-desc">message name (correlation)</span></li>
+        <li><span class="var-name">correlationKey</span><span class="var-desc">= processInstanceKey</span></li>
+        <li><span class="var-name">userMessage</span><span class="var-desc">injected as event variable</span></li>
+      </ul>
+      <div style="margin-top:10px;font-size:.75rem;color:var(--gray)">Non-interrupting catch event on ad-hoc sub-process boundary. Broker calls publishMessage to deliver user input back to running connector.</div>
+    </div>
+
+    <div class="vars-card" style="background:linear-gradient(135deg,#EFF6FF,#ECFDF5);">
+      <h4 style="color:var(--blue)"><span>🔄</span> Process Phases</h4>
+      <div style="font-size:.78rem;color:#334155;line-height:2.1;">
+        <div>▸ <strong>INIT</strong> — init-context script, product vars loaded</div>
+        <div>▸ <strong>COLLECTING</strong> — agent asks intake questions</div>
+        <div>▸ <strong>SIMULATING</strong> — run-simulation tool called</div>
+        <div>▸ <strong>ITERATING</strong> — user adjusts parameters</div>
+        <div>▸ <strong>COMPLETE</strong> — report_final, sub-process ends</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="tt" id="tt"></div>
+
+<script>
+function showTab(name, btn) {
+  document.querySelectorAll('.canvas').forEach(c => c.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  if (btn) btn.classList.add('active');
+}
+function hl(el) {
+  document.querySelectorAll('.node').forEach(n => n.classList.remove('hl'));
+  el.classList.add('hl');
+  setTimeout(() => el.classList.remove('hl'), 2200);
+}
+const tt = document.getElementById('tt');
+document.querySelectorAll('[data-tip]').forEach(el => {
+  el.addEventListener('mouseenter', () => { tt.textContent = el.dataset.tip; tt.classList.add('show'); });
+  el.addEventListener('mousemove', e => {
+    let x = e.clientX + 16, y = e.clientY + 12;
+    if (x + 275 > window.innerWidth) x = e.clientX - 272;
+    if (y + 130 > window.innerHeight) y = e.clientY - 95;
+    tt.style.left = x + 'px'; tt.style.top = y + 'px';
+  });
+  el.addEventListener('mouseleave', () => tt.classList.remove('show'));
+});
+</script>
+</body>
+</html>

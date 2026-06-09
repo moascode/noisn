@@ -81,7 +81,17 @@ function OverviewTab() {
       label: "PRESENTATION LAYER",
       color: C.user.accent,
       items: ["Web / Mobile Chat UI", "Live Report Panel (side-by-side)", "Parameter controls (natural language)"],
-      note: "User-facing. Sends messages via REST to Camunda API. Receives SSE updates for live report refresh.",
+      note: "User-facing. Connects via WebSocket to Spring Boot session broker (STOMP protocol). Receives real-time updates for questions, results, and report changes.",
+    },
+    {
+      label: "SESSION BROKER LAYER — Spring Boot",
+      color: C.calc.accent,
+      items: [
+        "WebSocket endpoint (spring-websocket + STOMP)",
+        "Zeebe job workers (@ZeebeWorker) — execute all tool logic",
+        "Calculator API (REST) — pension, coverage, eligibility endpoints",
+      ],
+      note: "All Spring Boot services. Session broker routes messages between React UI and Camunda process variables (via REST API). Job workers subscribe to Zeebe gRPC stream and execute tool implementations. Calculator API is stateless. Bedrock calls come from Camunda AI Agent Connector (not Spring Boot).",
     },
     {
       label: "ORCHESTRATION LAYER — Camunda 8 (Zeebe)",
@@ -104,18 +114,17 @@ function OverviewTab() {
         "RAG: Bedrock Knowledge Base (Danica product rules + guide book)",
         "Guardrails: grounding + content filtering on every response",
       ],
-      note: "Stateless LLM. All context injected per call by Camunda connector. Sub-process connector handles the reasoning loop internally.",
+      note: "Called directly by Camunda (not Spring Boot). Stateless LLM. All context injected per call by Camunda connector. Sub-process connector handles the reasoning loop internally. Bedrock credentials configured as connector properties in Camunda, not in Spring Boot.",
     },
     {
-      label: "INTEGRATION LAYER",
+      label: "INTEGRATION LAYER — Spring Boot",
       color: C.calc.accent,
       items: [
-        "Pension Amount Calculator (REST API)",
-        "Coverage Premium Calculator (REST API)",
-        "Benefit Projection Calculator (REST API)",
-        "Eligibility Rules Service (REST / DMN)",
+        "Calculator API (REST) — Pension, Coverage, Benefit, Eligibility",
+        "Zeebe Job Workers (@ZeebeWorker) — ask-question, store-answer, run-simulation, etc.",
+        "WebSocket Session Broker (spring-websocket + STOMP) — real-time UI updates",
       ],
-      note: "Deterministic. Called by Camunda connectors from within the simulation sub-process and as tools from the AI agent.",
+      note: "All Spring Boot services. Calculator API is stateless and deterministic. Workers implement tool logic called by Camunda jobs via gRPC. WebSocket broker replaces polling with push updates. Bedrock calls come from Camunda AI Agent Connector (not Spring Boot).",
     },
     {
       label: "KNOWLEDGE LAYER — Bedrock Knowledge Base",
@@ -124,9 +133,9 @@ function OverviewTab() {
         "Danica product catalogue + rules",
         "Pension advisor guide book (question framework)",
         "Coverage eligibility rules",
-        "Historical advisory patterns (future)",
+        "Historical advisory patterns",
       ],
-      note: "Vector-indexed. Retrieved via hybrid search (semantic + keyword). Used by AI agent for grounded responses.",
+      note: "Vector-indexed with Titan Embeddings v2. Retrieved via hybrid search (semantic + keyword). Queried by Bedrock during AI Agent Sub-process calls for product Q&A.",
     },
   ];
 
@@ -1177,6 +1186,7 @@ export default function App() {
           <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
             {[
               { label: "Camunda 8.8", color: C.camunda.accent },
+              { label: "Spring Boot 3.x", color: C.calc.accent },
               { label: "Bedrock (Claude 3.5)", color: C.agent.accent },
               { label: "AI Agent Sub-process", color: C.agent.accent },
               { label: "AI Agent Task", color: C.calc.accent },

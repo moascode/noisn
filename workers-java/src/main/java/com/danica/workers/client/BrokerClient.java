@@ -23,6 +23,9 @@ public class BrokerClient {
     @Value("${broker.internal-url}")
     private String brokerUrl;
 
+    @Value("${broker.internal-api-key}")
+    private String internalApiKey;
+
     public BrokerClient(RestTemplate restTemplate) {
         this.restTemplate = restTemplate;
     }
@@ -30,6 +33,7 @@ public class BrokerClient {
     public String send(String processInstanceKey, String messageType, Object payload) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("X-Internal-Api-Key", internalApiKey);
 
         Map<String, Object> body = Map.of(
             "processInstanceKey", processInstanceKey,
@@ -39,8 +43,7 @@ public class BrokerClient {
 
         HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
         try {
-            ResponseEntity<Map> response = restTemplate.postForEntity(
-                brokerUrl + "/internal/send", request, Map.class);
+            restTemplate.postForEntity(brokerUrl + "/internal/send", request, Map.class);
             return "delivered";
         } catch (HttpClientErrorException.NotFound e) {
             log.warn("Session not found in broker for processInstanceKey={}", processInstanceKey);

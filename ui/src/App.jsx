@@ -29,6 +29,18 @@ const fmt = (n) =>
 
 const fmtPct = (n) => (n != null ? `${Number(n).toFixed(1)}%` : "—");
 
+// keyframes injected once at the document level — available on all screens
+const GLOBAL_STYLES = `
+  @keyframes bounce {
+    0%, 60%, 100% { transform: translateY(0); }
+    30% { transform: translateY(-6px); }
+  }
+  * { box-sizing: border-box; }
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #ccc; border-radius: 2px; }
+`;
+
 // ─── COMPONENTS ───────────────────────────────────────────────────────────────
 
 function ReplacementGauge({ pct }) {
@@ -187,25 +199,22 @@ function LiveReport({ profile, existingCoverage, recommendation, simulationResul
           ✓ Session complete — report finalised
         </div>
       )}
-
-      {/* Customer Profile Section */}
       <div style={{ marginBottom: 20 }}>
-        <div style={{ fontSize: 10, color: C.muted, fontFamily: "monospace",
-          letterSpacing: "2px", marginBottom: 10 }}>CUSTOMER PROFILE</div>
+        <div style={{ fontSize: 10, color: C.muted, fontFamily: "monospace", letterSpacing: "2px", marginBottom: 10 }}>
+          CUSTOMER PROFILE
+        </div>
         <ProfilePanel profile={profile} />
       </div>
-
-      {/* Existing Coverage Section */}
       <div style={{ marginBottom: 20, paddingTop: 16, borderTop: `1px solid ${C.border}` }}>
-        <div style={{ fontSize: 10, color: C.muted, fontFamily: "monospace",
-          letterSpacing: "2px", marginBottom: 10 }}>EXISTING COVERAGE</div>
+        <div style={{ fontSize: 10, color: C.muted, fontFamily: "monospace", letterSpacing: "2px", marginBottom: 10 }}>
+          EXISTING COVERAGE
+        </div>
         <CoveragePanel coverage={existingCoverage} />
       </div>
-
-      {/* Recommended Product Section */}
       <div style={{ paddingTop: 16, borderTop: `1px solid ${C.border}` }}>
-        <div style={{ fontSize: 10, color: C.muted, fontFamily: "monospace",
-          letterSpacing: "2px", marginBottom: 10 }}>RECOMMENDED PRODUCT</div>
+        <div style={{ fontSize: 10, color: C.muted, fontFamily: "monospace", letterSpacing: "2px", marginBottom: 10 }}>
+          RECOMMENDED PRODUCT
+        </div>
         <RecommendationPanel recommendation={recommendation} simulationResult={simulationResult} />
       </div>
     </div>
@@ -249,12 +258,12 @@ function ChatBubble({ role, content, isTyping }) {
 
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 export default function App() {
-  const [screen, setScreen] = useState("connecting"); // connecting | chat
+  const [screen, setScreen] = useState("consent"); // consent | connecting | chat
+  const [consentGiven, setConsentGiven] = useState(false);
   const [processKey, setProcessKey] = useState(null);
   const [messages, setMessages] = useState([]);
   const [inputValue, setInputValue] = useState("");
   const [isTyping, setIsTyping] = useState(false);
-  const [isSending, setIsSending] = useState(false);
   const [disconnected, setDisconnected] = useState(false);
   const [error, setError] = useState(null);
 
@@ -266,9 +275,14 @@ export default function App() {
   const [sessionComplete, setSessionComplete] = useState(false);
 
   const chatEndRef = useRef(null);
+  // Guards against duplicate sends; reset when first agent response arrives
+  const pendingSendRef = useRef(false);
 
   function handleMessage(frame) {
+    // Any incoming frame means the agent responded — unblock the input
+    pendingSendRef.current = false;
     setIsTyping(false);
+
     switch (frame.type) {
       case "question":
         setMessages(m => [...m, { role: "agent", content: frame.content, isQuestion: true }]);
@@ -310,6 +324,7 @@ export default function App() {
   }
 
   const { send } = useSessionSocket({
+    enabled: consentGiven,
     onReady: (pik) => {
       setProcessKey(pik);
       setScreen("chat");
@@ -325,14 +340,13 @@ export default function App() {
   }, [messages, isTyping]);
 
   const handleSend = () => {
-    if (!inputValue.trim() || isSending || sessionComplete) return;
+    if (!inputValue.trim() || pendingSendRef.current || sessionComplete || disconnected) return;
     const message = inputValue.trim();
     setInputValue("");
-    setIsSending(true);
+    pendingSendRef.current = true;  // cleared when agent responds
     setIsTyping(true);
     setMessages(prev => [...prev, { role: "user", content: message }]);
     send(message);
-    setIsSending(false);
   };
 
   const handleKeyDown = (e) => {
@@ -342,13 +356,61 @@ export default function App() {
     }
   };
 
+  const handleConsent = () => {
+    setConsentGiven(true);
+    setScreen("connecting");
+  };
+
+  // ── CONSENT SCREEN ────────────────────────────────────────────────────────
+  if (screen === "consent") {
+    return (
+      <div style={{ minHeight: "100vh", background: C.bg, display: "flex",
+        alignItems: "center", justifyContent: "center", fontFamily: "Georgia, serif" }}>
+        <style>{GLOBAL_STYLES}</style>
+        <div style={{ width: 440, background: C.surface, border: `1px solid ${C.border}`,
+          borderRadius: 12, overflow: "hidden", boxShadow: "0 4px 24px rgba(0,0,0,0.08)" }}>
+          <div style={{ background: C.accent, padding: "28px 32px" }}>
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.6)", fontFamily: "monospace",
+              letterSpacing: "3px", marginBottom: 8 }}>DANICA PENSION · DENMARK</div>
+            <div style={{ fontSize: 22, color: "#fff", fontWeight: 400 }}>Pension Advisor</div>
+            <div style={{ fontSize: 13, color: "rgba(255,255,255,0.7)", marginTop: 6 }}>
+              AI-powered pension recommendation
+            </div>
+          </div>
+          <div style={{ padding: "28px 32px" }}>
+            <div style={{ fontSize: 13, color: C.text, lineHeight: 1.75, marginBottom: 20 }}>
+              Our AI advisor will ask you a few questions about your financial situation to recommend
+              the Danica pension product best suited to your needs and run a personalised projection.
+            </div>
+            <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8,
+              padding: "14px 16px", marginBottom: 20, fontSize: 12, color: C.dim, lineHeight: 1.65 }}>
+              <strong style={{ color: C.text }}>Data & Privacy</strong><br />
+              By continuing, you consent to Danica Pension A/S processing your personal and financial
+              data for the purpose of pension advisory under GDPR Article 6(1)(b). Your data is not
+              stored beyond this session without further consent. You may withdraw at any time.
+            </div>
+            <button onClick={handleConsent} style={{
+              width: "100%", background: C.accent, color: "#fff", border: "none",
+              borderRadius: 8, padding: "14px", fontSize: 14, fontWeight: 600,
+              cursor: "pointer", letterSpacing: "0.3px",
+            }}>
+              I Agree — Start Consultation →
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // ── CONNECTING SCREEN ─────────────────────────────────────────────────────
   if (screen === "connecting") {
     return (
       <div style={{ minHeight: "100vh", background: C.bg, display: "flex",
         alignItems: "center", justifyContent: "center", fontFamily: "Georgia, serif" }}>
+        <style>{GLOBAL_STYLES}</style>
         <div style={{ textAlign: "center" }}>
-          <div style={{ fontSize: 32, marginBottom: 16, opacity: 0.4, animation: "bounce 1.2s ease-in-out infinite" }}>◎</div>
+          <div style={{ fontSize: 32, marginBottom: 16, opacity: 0.4,
+            animation: "bounce 1.2s ease-in-out infinite" }}>◎</div>
           <div style={{ fontSize: 14, color: C.dim }}>Connecting to Danica Advisor...</div>
         </div>
       </div>
@@ -356,18 +418,11 @@ export default function App() {
   }
 
   // ── MAIN CHAT + REPORT SCREEN ─────────────────────────────────────────────
+  const inputBlocked = pendingSendRef.current || sessionComplete || disconnected;
+
   return (
     <div style={{ display: "flex", height: "100vh", background: C.bg, fontFamily: "Georgia, serif", overflow: "hidden" }}>
-      <style>{`
-        @keyframes bounce {
-          0%, 60%, 100% { transform: translateY(0); }
-          30% { transform: translateY(-6px); }
-        }
-        * { box-sizing: border-box; }
-        ::-webkit-scrollbar { width: 4px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: #ccc; border-radius: 2px; }
-      `}</style>
+      <style>{GLOBAL_STYLES}</style>
 
       {/* ── CHAT PANEL ── */}
       <div style={{ width: "45%", display: "flex", flexDirection: "column",
@@ -426,23 +481,24 @@ export default function App() {
               value={inputValue}
               onChange={e => setInputValue(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={sessionComplete ? "Session complete" : "Type your message or ask a question..."}
-              disabled={sessionComplete || disconnected}
+              placeholder={sessionComplete ? "Session complete" : "Type your message..."}
+              disabled={inputBlocked}
               rows={2}
               style={{
                 flex: 1, border: `1px solid ${C.border}`, borderRadius: 8,
                 padding: "10px 12px", fontSize: 14, fontFamily: "Georgia, serif",
                 color: C.text, background: C.surface, resize: "none", outline: "none",
-                lineHeight: 1.5, opacity: sessionComplete || disconnected ? 0.5 : 1,
+                lineHeight: 1.5, opacity: inputBlocked ? 0.5 : 1,
               }}
             />
             <button onClick={handleSend}
-              disabled={isSending || !inputValue.trim() || sessionComplete || disconnected}
+              disabled={inputBlocked || !inputValue.trim()}
               style={{
-                background: inputValue.trim() && !sessionComplete && !disconnected ? C.accent : C.border,
-                color: inputValue.trim() && !sessionComplete && !disconnected ? "#fff" : C.muted,
+                background: !inputBlocked && inputValue.trim() ? C.accent : C.border,
+                color: !inputBlocked && inputValue.trim() ? "#fff" : C.muted,
                 border: "none", borderRadius: 8, padding: "0 18px",
-                cursor: inputValue.trim() ? "pointer" : "default", fontSize: 18, transition: "all 0.15s",
+                cursor: !inputBlocked && inputValue.trim() ? "pointer" : "default",
+                fontSize: 18, transition: "all 0.15s",
               }}>→</button>
           </div>
           <div style={{ fontSize: 11, color: C.muted, marginTop: 6, textAlign: "center" }}>

@@ -1,10 +1,25 @@
 camunda:
   rest-url: ${CAMUNDA_REST_URL:https://example.camunda.io}
-  rest-token: ${CAMUNDA_REST_TOKEN:}
+  rest-token: ${CAMUNDA_REST_TOKEN}   # required — no default; missing token causes fast-fail on startup
   process-definition-key: ${PROCESS_DEFINITION_KEY:pension-configurator}
+
+broker:
+  internal-api-key: ${BROKER_INTERNAL_API_KEY:changeme-set-in-prod}
+  allowed-origins: ${BROKER_ALLOWED_ORIGINS:http://localhost:5173}
+  session-disconnect-ttl-minutes: ${BROKER_SESSION_DISCONNECT_TTL_MINUTES:30}
+
+camunda-client:
+  connect-timeout-ms: ${CAMUNDA_CONNECT_TIMEOUT_MS:5000}
+  read-timeout-ms: ${CAMUNDA_READ_TIMEOUT_MS:10000}
 
 server:
   port: ${PORT:3001}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
 
 logging:
   level:

@@ -8,6 +8,7 @@ camunda:
 
 broker:
   internal-url: ${BROKER_INTERNAL_URL:http://localhost:3001}
+  internal-api-key: ${BROKER_INTERNAL_API_KEY:changeme-set-in-prod}
 
 calculator:
   api-url: ${CALCULATOR_API_URL:http://localhost:8001}

@@ -1,0 +1,16 @@
+camunda:
+  rest-url: http://mock-camunda.test
+  rest-token: test-token
+  process-definition-key: pension-configurator-test
+
+broker:
+  internal-api-key: test-internal-key
+  allowed-origins: http://localhost:5173
+  session-disconnect-ttl-minutes: 30
+
+camunda-client:
+  connect-timeout-ms: 1000
+  read-timeout-ms: 2000
+
+server:
+  port: 0   # random port for tests

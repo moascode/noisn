@@ -4,12 +4,20 @@ services:
     build:
       context: ./broker
       dockerfile: Dockerfile
+    # Port 3001 is intentionally NOT published to the host.
+    # The UI connects via the host-mapped WebSocket (ws://localhost:3001) only in dev.
+    # In production put a TLS-terminating reverse proxy in front and expose via that.
+    # Workers reach the broker over the Docker-internal network (http://broker:3001).
+    expose:
+      - "3001"
     ports:
-      - "3001:3001"
+      - "3001:3001"   # expose to host for local dev — remove in production
     environment:
       - CAMUNDA_REST_URL=${CAMUNDA_REST_URL}
       - CAMUNDA_REST_TOKEN=${CAMUNDA_REST_TOKEN}
       - PROCESS_DEFINITION_KEY=${PROCESS_DEFINITION_KEY:-pension-configurator}
+      - BROKER_INTERNAL_API_KEY=${BROKER_INTERNAL_API_KEY}
+      - BROKER_ALLOWED_ORIGINS=${BROKER_ALLOWED_ORIGINS:-http://localhost:5173}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3001/actuator/health"]
       interval: 10s
@@ -30,8 +38,11 @@ services:
       - ZEEBE_CLIENT_ID=${ZEEBE_CLIENT_ID}
       - ZEEBE_CLIENT_SECRET=${ZEEBE_CLIENT_SECRET}
       - BROKER_INTERNAL_URL=http://broker:3001
+      - BROKER_INTERNAL_API_KEY=${BROKER_INTERNAL_API_KEY}
       - CALCULATOR_API_URL=http://api:8001
       - AWS_REGION=${AWS_REGION:-eu-west-1}
+      # AWS credentials: prefer IAM roles / instance profiles in production.
+      # Only pass these explicitly in local dev or CI environments.
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
       - BEDROCK_KB_ID=${BEDROCK_KB_ID}
@@ -52,10 +63,11 @@ services:
     build:
       context: ./ui
       dockerfile: Dockerfile
+      # VITE_* vars are baked in at build time — pass them as build args
+      args:
+        - VITE_BROKER_WS_URL=${VITE_BROKER_WS_URL:-ws://localhost:3001}
     ports:
       - "5173:80"
     depends_on:
       broker:
         condition: service_healthy
-    environment:
-      - VITE_BROKER_WS_URL=ws://localhost:3001

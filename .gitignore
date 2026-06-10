@@ -1,0 +1,37 @@
+# Environment files — never commit real credentials
+.env
+ui/.env
+workers-java/.env
+broker/.env
+
+# Keep examples
+!.env.example
+!ui/.env.example
+
+# Java build output
+**/target/
+*.class
+
+# Node
+node_modules/
+ui/node_modules/
+demo/node_modules/
+dist/
+ui/dist/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+api/__pycache__/
+workers/__pycache__/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db

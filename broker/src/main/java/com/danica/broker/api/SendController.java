@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.io.IOException;
 import java.util.Map;
 
+// Authentication for this endpoint is enforced by InternalApiKeyFilter (X-Internal-Api-Key header)
 @RestController
 @RequestMapping("/internal")
 public class SendController {
@@ -37,7 +38,7 @@ public class SendController {
             return ResponseEntity.status(404).body(Map.of("status", "session_not_found"));
         }
 
-        WebSocketSession ws = entry.ws;
+        WebSocketSession ws = entry.getWs();
         if (ws == null || !ws.isOpen()) {
             log.warn("Session disconnected for processInstanceKey={}", req.processInstanceKey());
             return ResponseEntity.status(503).body(Map.of("status", "session_not_connected"));
@@ -49,6 +50,7 @@ public class SendController {
                 "content", req.payload() != null ? req.payload() : Map.of()
             );
             String json = objectMapper.writeValueAsString(frame);
+            // Synchronize on ws to serialise concurrent sends from multiple workers
             synchronized (ws) {
                 ws.sendMessage(new TextMessage(json));
             }

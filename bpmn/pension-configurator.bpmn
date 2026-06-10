@@ -10,7 +10,11 @@
                   modeler:executionPlatform="Camunda Cloud"
                   modeler:executionPlatformVersion="8.8.0">
 
+  <!-- Message used to deliver user input from the Session Broker to the running process.
+       Correlation is performed on the 'sessionId' process variable (set at start). -->
   <bpmn:message id="Message_UserInput" name="user_input_received" />
+
+  <bpmn:error id="Error_AgentFailure" name="Agent Failure" errorCode="AGENT_FAILURE" />
 
   <bpmn:process id="pension-configurator" name="Pension Configurator (Recommender)" isExecutable="true">
 
@@ -25,6 +29,8 @@
 
     <!-- ═══════════════════════════════════════════════════
          INIT: Initialise process variables
+         sessionId is passed in from the Session Broker at process creation time.
+         It is used as the message correlation key throughout the session.
     ═══════════════════════════════════════════════════ -->
     <bpmn:scriptTask id="Task_InitSession" name="Initialise session variables" scriptFormat="feel">
       <bpmn:extensionElements>
@@ -45,10 +51,11 @@
     <!-- ═══════════════════════════════════════════════════
          AD-HOC SUB-PROCESS: AI Agent Advisor
          Element template: agenticai-aiagent-job-worker
+         maxModelCalls raised to 25 to accommodate the 6-step workflow
+         (profile intake ~8 q's + coverage ~3 q's + KB lookup + recommendation + simulation ≥ 15 LLM turns)
     ═══════════════════════════════════════════════════ -->
     <bpmn:adHocSubProcess id="SubProcess_AgentAdvisor" name="AI Agent Advisor" ordering="Parallel" cancelRemainingInstances="false">
       <bpmn:extensionElements>
-        <!-- AI Agent Connector configuration -->
         <zeebe:taskDefinition type="agenticai:aiagent" retries="1" />
         <zeebe:ioMapping>
           <zeebe:input source="=userMessage" target="userMessage" />
@@ -61,12 +68,12 @@
         <zeebe:properties>
           <zeebe:property name="agenticai:provider" value="bedrock" />
           <zeebe:property name="agenticai:modelId" value="anthropic.claude-3-5-sonnet-20241022-v2:0" />
-          <zeebe:property name="agenticai:awsRegion" value="eu-west-1" />
+          <zeebe:property name="agenticai:awsRegion" value="=secrets.AWS_REGION" />
           <zeebe:property name="agenticai:awsAccessKeyId" value="=secrets.AWS_ACCESS_KEY_ID" />
           <zeebe:property name="agenticai:awsSecretAccessKey" value="=secrets.AWS_SECRET_ACCESS_KEY" />
           <zeebe:property name="agenticai:memory" value="in-process" />
           <zeebe:property name="agenticai:memoryWindow" value="40" />
-          <zeebe:property name="agenticai:maxModelCalls" value="10" />
+          <zeebe:property name="agenticai:maxModelCalls" value="25" />
           <zeebe:property name="agenticai:resultVariable" value="agentResponse" />
           <zeebe:property name="agenticai:systemPrompt" value="You are a pension advisor for Danica Pension. Your goal is to understand the customer's full situation and recommend the Danica product that best fits their needs — not to configure a product they have already chosen.
 
@@ -83,7 +90,7 @@ You have access to these tools:
 
 - update-profile: Persist collected profile or coverage data as process variables so the live report can be restored on reconnect. Call this after each meaningful intake answer, not after every message.
 
-- run-simulation: Run a pension projection for a specific product and customer profile. Always call this AFTER making a recommendation, using the recommended productCode.
+- run-simulation: Run a pension projection for the recommended product and customer profile. Always call this AFTER making a recommendation, using the recommended productCode.
 
 - search-kb: Look up Danica product details, eligibility rules, or coverage information.
 
@@ -98,7 +105,6 @@ Workflow:
 6. CONFIRMATION — When the customer confirms, send a report_final frame.
 
 Always ask one question at a time. Match the customer's language (Danish or English). Never recommend a product before completing steps 1 and 2." />
-          <!-- Tool definitions for the connector -->
           <zeebe:property name="agenticai:toolDefinitions" value='[
   {
     "name": "send-to-ui",
@@ -209,20 +215,45 @@ Always ask one question at a time. Match the customer's language (Danish or Engl
         </bpmn:extensionElements>
       </bpmn:serviceTask>
 
-      <!-- Message Receive Event: user input from UI via broker -->
+      <!-- Message Receive Event: user input from UI via Session Broker.
+           Correlates on 'sessionId' — a process variable set at creation time by the broker.
+           The broker calls publishMessage("user_input_received", sessionId, {userMessage: "..."}).
+           Using sessionId (not processInstanceKey) avoids the need to publish the instance key
+           back into the process as a variable after creation. -->
       <bpmn:intermediateCatchEvent id="Event_UserInput" name="Receive user input">
-        <bpmn:messageEventDefinition id="MessageEventDef_UserInput"
-          messageRef="Message_UserInput"
-          correlationKey="=processInstanceKey" />
+        <bpmn:extensionElements>
+          <zeebe:subscription correlationKey="=sessionId" />
+        </bpmn:extensionElements>
+        <bpmn:messageEventDefinition id="MessageEventDef_UserInput" messageRef="Message_UserInput" />
       </bpmn:intermediateCatchEvent>
 
     </bpmn:adHocSubProcess>
 
     <!-- ═══════════════════════════════════════════════════
-         ERROR BOUNDARY: Agent timeout / failure
+         TIMEOUT BOUNDARY: 30-minute session hard limit
+    ═══════════════════════════════════════════════════ -->
+    <bpmn:boundaryEvent id="BoundaryEvent_Timeout" attachedToRef="SubProcess_AgentAdvisor" cancelActivity="true">
+      <bpmn:timerEventDefinition id="TimerEventDef_Timeout">
+        <bpmn:timeDuration>PT30M</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+      <bpmn:outgoing>Flow_timeout_to_end</bpmn:outgoing>
+    </bpmn:boundaryEvent>
+
+    <bpmn:endEvent id="EndEvent_Timeout" name="Session timed out">
+      <bpmn:incoming>Flow_timeout_to_end</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:sequenceFlow id="Flow_timeout_to_end" sourceRef="BoundaryEvent_Timeout" targetRef="EndEvent_Timeout" />
+
+    <!-- ═══════════════════════════════════════════════════
+         ERROR BOUNDARY: Agent / tool failures
+         errorCodeVariable and errorMessageVariable surface details in Camunda Operate
     ═══════════════════════════════════════════════════ -->
     <bpmn:boundaryEvent id="BoundaryEvent_AgentError" attachedToRef="SubProcess_AgentAdvisor" cancelActivity="true">
-      <bpmn:errorEventDefinition id="ErrorEventDef_Agent" />
+      <bpmn:errorEventDefinition id="ErrorEventDef_Agent"
+        errorRef="Error_AgentFailure"
+        camunda:errorCodeVariable="errorCode"
+        camunda:errorMessageVariable="errorMessage" />
       <bpmn:outgoing>Flow_error_to_end</bpmn:outgoing>
     </bpmn:boundaryEvent>
 
@@ -250,79 +281,80 @@ Always ask one question at a time. Match the customer's language (Danish or Engl
     <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="pension-configurator">
 
       <bpmndi:BPMNShape id="StartEvent_1_di" bpmnElement="StartEvent_1">
-        <dc:Bounds x="152" y="242" width="36" height="36" />
-        <bpmndi:BPMNLabel>
-          <dc:Bounds x="127" y="285" width="86" height="14" />
-        </bpmndi:BPMNLabel>
+        <dc:Bounds x="152" y="262" width="36" height="36" />
+        <bpmndi:BPMNLabel><dc:Bounds x="127" y="305" width="86" height="14" /></bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
 
       <bpmndi:BPMNShape id="Task_InitSession_di" bpmnElement="Task_InitSession">
-        <dc:Bounds x="240" y="220" width="120" height="80" />
+        <dc:Bounds x="240" y="240" width="120" height="80" />
       </bpmndi:BPMNShape>
 
       <bpmndi:BPMNShape id="SubProcess_AgentAdvisor_di" bpmnElement="SubProcess_AgentAdvisor" isExpanded="true">
-        <dc:Bounds x="420" y="120" width="780" height="320" />
+        <dc:Bounds x="420" y="140" width="780" height="320" />
       </bpmndi:BPMNShape>
 
       <bpmndi:BPMNShape id="Task_SendToUi_di" bpmnElement="Task_SendToUi">
-        <dc:Bounds x="460" y="180" width="120" height="80" />
+        <dc:Bounds x="460" y="200" width="120" height="80" />
       </bpmndi:BPMNShape>
 
       <bpmndi:BPMNShape id="Task_UpdateProfile_di" bpmnElement="Task_UpdateProfile">
-        <dc:Bounds x="620" y="180" width="120" height="80" />
+        <dc:Bounds x="620" y="200" width="120" height="80" />
       </bpmndi:BPMNShape>
 
       <bpmndi:BPMNShape id="Task_RunSimulation_di" bpmnElement="Task_RunSimulation">
-        <dc:Bounds x="780" y="180" width="120" height="80" />
+        <dc:Bounds x="780" y="200" width="120" height="80" />
       </bpmndi:BPMNShape>
 
       <bpmndi:BPMNShape id="Task_SearchKb_di" bpmnElement="Task_SearchKb">
-        <dc:Bounds x="940" y="180" width="120" height="80" />
+        <dc:Bounds x="940" y="200" width="120" height="80" />
       </bpmndi:BPMNShape>
 
       <bpmndi:BPMNShape id="Event_UserInput_di" bpmnElement="Event_UserInput">
-        <dc:Bounds x="700" y="312" width="36" height="36" />
-        <bpmndi:BPMNLabel>
-          <dc:Bounds x="675" y="355" width="86" height="27" />
-        </bpmndi:BPMNLabel>
+        <dc:Bounds x="700" y="332" width="36" height="36" />
+        <bpmndi:BPMNLabel><dc:Bounds x="675" y="375" width="86" height="27" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="BoundaryEvent_Timeout_di" bpmnElement="BoundaryEvent_Timeout">
+        <dc:Bounds x="642" y="442" width="36" height="36" />
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNShape id="EndEvent_Timeout_di" bpmnElement="EndEvent_Timeout">
+        <dc:Bounds x="642" y="542" width="36" height="36" />
+        <bpmndi:BPMNLabel><dc:Bounds x="620" y="585" width="80" height="27" /></bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
 
       <bpmndi:BPMNShape id="BoundaryEvent_AgentError_di" bpmnElement="BoundaryEvent_AgentError">
-        <dc:Bounds x="782" y="422" width="36" height="36" />
+        <dc:Bounds x="802" y="442" width="36" height="36" />
       </bpmndi:BPMNShape>
 
       <bpmndi:BPMNShape id="EndEvent_Complete_di" bpmnElement="EndEvent_Complete">
-        <dc:Bounds x="1252" y="242" width="36" height="36" />
-        <bpmndi:BPMNLabel>
-          <dc:Bounds x="1230" y="285" width="80" height="14" />
-        </bpmndi:BPMNLabel>
+        <dc:Bounds x="1272" y="260" width="36" height="36" />
+        <bpmndi:BPMNLabel><dc:Bounds x="1250" y="303" width="80" height="14" /></bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
 
       <bpmndi:BPMNShape id="EndEvent_Error_di" bpmnElement="EndEvent_Error">
-        <dc:Bounds x="782" y="522" width="36" height="36" />
-        <bpmndi:BPMNLabel>
-          <dc:Bounds x="766" y="565" width="68" height="14" />
-        </bpmndi:BPMNLabel>
+        <dc:Bounds x="802" y="542" width="36" height="36" />
+        <bpmndi:BPMNLabel><dc:Bounds x="786" y="585" width="68" height="14" /></bpmndi:BPMNLabel>
       </bpmndi:BPMNShape>
 
       <bpmndi:BPMNEdge id="Flow_to_init_di" bpmnElement="Flow_to_init">
-        <di:waypoint x="188" y="260" />
-        <di:waypoint x="240" y="260" />
+        <di:waypoint x="188" y="280" /><di:waypoint x="240" y="280" />
       </bpmndi:BPMNEdge>
 
       <bpmndi:BPMNEdge id="Flow_to_agent_di" bpmnElement="Flow_to_agent">
-        <di:waypoint x="360" y="260" />
-        <di:waypoint x="420" y="260" />
+        <di:waypoint x="360" y="280" /><di:waypoint x="420" y="280" />
       </bpmndi:BPMNEdge>
 
       <bpmndi:BPMNEdge id="Flow_to_end_di" bpmnElement="Flow_to_end">
-        <di:waypoint x="1200" y="260" />
-        <di:waypoint x="1252" y="260" />
+        <di:waypoint x="1200" y="280" /><di:waypoint x="1272" y="278" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="Flow_timeout_to_end_di" bpmnElement="Flow_timeout_to_end">
+        <di:waypoint x="660" y="478" /><di:waypoint x="660" y="542" />
       </bpmndi:BPMNEdge>
 
       <bpmndi:BPMNEdge id="Flow_error_to_end_di" bpmnElement="Flow_error_to_end">
-        <di:waypoint x="800" y="458" />
-        <di:waypoint x="800" y="522" />
+        <di:waypoint x="820" y="478" /><di:waypoint x="820" y="542" />
       </bpmndi:BPMNEdge>
 
     </bpmndi:BPMNPlane>

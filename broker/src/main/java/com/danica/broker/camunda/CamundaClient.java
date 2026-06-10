@@ -8,8 +8,11 @@ import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 @Component
@@ -45,7 +48,7 @@ public class CamundaClient {
         Map<?, ?> response = restTemplate.postForObject(restUrl + "/v2/process-instances", request, Map.class);
 
         if (response == null || !response.containsKey("processInstanceKey")) {
-            throw new RuntimeException("Failed to create process instance: null or missing processInstanceKey in response");
+            throw new RuntimeException("Camunda returned null or missing processInstanceKey");
         }
 
         return String.valueOf(response.get("processInstanceKey"));
@@ -60,8 +63,13 @@ public class CamundaClient {
         );
 
         HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
-        restTemplate.postForEntity(restUrl + "/v2/messages/publication", request, Void.class);
-        log.debug("Published message '{}' for correlationKey={}", messageName, correlationKey);
+        try {
+            restTemplate.postForEntity(restUrl + "/v2/messages/publication", request, Void.class);
+            log.debug("Published message '{}' for correlationKey={}", messageName, correlationKey);
+        } catch (RestClientException e) {
+            // Rethrow with context so the caller can surface a clean error to the WebSocket client
+            throw new RuntimeException("Failed to publish message '" + messageName + "': " + e.getMessage(), e);
+        }
     }
 
     private HttpHeaders buildHeaders() {
@@ -69,17 +77,51 @@ public class CamundaClient {
         headers.setContentType(MediaType.APPLICATION_JSON);
         if (restToken != null && !restToken.isBlank()) {
             headers.setBearerAuth(restToken);
+        } else {
+            log.warn("CAMUNDA_REST_TOKEN is not set — REST calls will be unauthenticated");
         }
         return headers;
     }
 
-    // Camunda REST v2 variables format: { varName: { value: ..., type: ... } }
+    /**
+     * Wraps variables into Camunda REST v2 format: { varName: { value: ..., type: ... } }.
+     * Type is inferred from the Java type. Maps and Lists are serialised to JSON strings.
+     */
     private Map<String, Object> wrapVariables(Map<String, Object> variables) {
-        return variables.entrySet().stream().collect(
-            java.util.stream.Collectors.toMap(
-                Map.Entry::getKey,
-                e -> Map.of("value", e.getValue())
-            )
-        );
+        Map<String, Object> result = new HashMap<>();
+        for (Map.Entry<String, Object> e : variables.entrySet()) {
+            result.put(e.getKey(), buildVariableWrapper(e.getValue()));
+        }
+        return result;
+    }
+
+    private Map<String, Object> buildVariableWrapper(Object value) {
+        if (value == null) {
+            return Map.of("value", "null", "type", "Null");
+        }
+        if (value instanceof String s) {
+            return Map.of("value", s, "type", "String");
+        }
+        if (value instanceof Long l) {
+            return Map.of("value", l, "type", "Long");
+        }
+        if (value instanceof Integer i) {
+            return Map.of("value", i.longValue(), "type", "Long");
+        }
+        if (value instanceof Double d) {
+            return Map.of("value", d, "type", "Double");
+        }
+        if (value instanceof Boolean b) {
+            return Map.of("value", b, "type", "Boolean");
+        }
+        if (value instanceof Map || value instanceof List) {
+            try {
+                String json = objectMapper.writeValueAsString(value);
+                return Map.of("value", json, "type", "Json");
+            } catch (Exception e) {
+                log.warn("Failed to serialise variable value to JSON, falling back to String: {}", e.getMessage());
+            }
+        }
+        return Map.of("value", String.valueOf(value), "type", "String");
     }
 }

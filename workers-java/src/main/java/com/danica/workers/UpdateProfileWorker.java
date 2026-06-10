@@ -9,19 +9,48 @@ import org.springframework.stereotype.Component;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 
 @Component
 public class UpdateProfileWorker {
 
     private static final Logger log = LoggerFactory.getLogger(UpdateProfileWorker.class);
 
+    private static final Set<String> ALLOWED_SECTIONS = Set.of("customerProfile", "existingCoverage");
+
     @JobWorker(type = "update-profile", timeout = 5000)
-    public Map<String, Object> handle(JobClient client, ActivatedJob job) {
+    public void handle(JobClient client, ActivatedJob job) {
         Map<String, Object> vars = job.getVariablesAsMap();
         Map<String, Object> toolCall = (Map<String, Object>) vars.get("toolCall");
 
+        if (toolCall == null) {
+            client.newThrowErrorCommand(job)
+                .errorCode("MISSING_TOOL_CALL")
+                .errorMessage("toolCall variable is null")
+                .send().join();
+            return;
+        }
+
         String section = (String) toolCall.get("section");
-        Map<String, Object> fields = (Map<String, Object>) toolCall.get("fields");
+        if (section == null || !ALLOWED_SECTIONS.contains(section)) {
+            client.newThrowErrorCommand(job)
+                .errorCode("INVALID_SECTION")
+                .errorMessage("section must be one of " + ALLOWED_SECTIONS + ", got: " + section)
+                .send().join();
+            return;
+        }
+
+        Object rawFields = toolCall.get("fields");
+        if (rawFields == null) {
+            client.newThrowErrorCommand(job)
+                .errorCode("MISSING_FIELDS")
+                .errorMessage("fields is null in update-profile toolCall")
+                .send().join();
+            return;
+        }
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> fields = (Map<String, Object>) rawFields;
 
         Map<String, Object> existing = new HashMap<>();
         Object current = vars.get(section);
@@ -32,9 +61,9 @@ public class UpdateProfileWorker {
 
         log.info("update-profile: section={}, updatedFields={}", section, fields.keySet());
 
-        return Map.of(
-            section, existing,
-            "toolCallResult", "updated"
-        );
+        client.newCompleteCommand(job)
+            .variable(section, existing)
+            .variable("toolCallResult", "updated")
+            .send().join();
     }
 }

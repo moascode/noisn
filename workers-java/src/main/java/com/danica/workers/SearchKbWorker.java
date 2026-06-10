@@ -27,7 +27,9 @@ public class SearchKbWorker {
         Map<String, Object> toolCall = (Map<String, Object>) vars.get("toolCall");
         String query = (String) toolCall.get("query");
 
-        log.info("search-kb: query={}", query);
+        // Sanitise before logging to prevent log injection from user-supplied text
+        String safeQuery = query != null ? query.replaceAll("[\r\n\t]", " ") : "(null)";
+        log.info("search-kb: query={}", safeQuery);
 
         String answer = kbClient.retrieveAndGenerate(query);
         return Map.of("toolCallResult", answer);

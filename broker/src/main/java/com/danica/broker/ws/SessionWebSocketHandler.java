@@ -11,6 +11,7 @@ import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
+import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -38,10 +39,23 @@ public class SessionWebSocketHandler extends TextWebSocketHandler {
     }
 
     @Override
-    protected void handleTextMessage(WebSocketSession session, TextMessage message) throws Exception {
-        Map<String, Object> frame = objectMapper.readValue(message.getPayload(), new TypeReference<>() {});
+    protected void handleTextMessage(WebSocketSession session, TextMessage message) throws IOException {
+        Map<String, Object> frame;
+        try {
+            frame = objectMapper.readValue(message.getPayload(), new TypeReference<>() {});
+        } catch (Exception e) {
+            sendError(session, "Invalid JSON frame");
+            return;
+        }
+
         String type = (String) frame.get("type");
         String sessionId = (String) session.getAttributes().get("sessionId");
+
+        if (type == null) {
+            log.warn("Frame missing 'type' field from sessionId={}", sessionId);
+            sendError(session, "Frame missing required 'type' field");
+            return;
+        }
 
         switch (type) {
             case "start_session" -> handleStartSession(session, sessionId, frame);
@@ -51,23 +65,29 @@ public class SessionWebSocketHandler extends TextWebSocketHandler {
         }
     }
 
-    private void handleStartSession(WebSocketSession session, String sessionId, Map<String, Object> frame) throws Exception {
+    private void handleStartSession(WebSocketSession session, String sessionId, Map<String, Object> frame) throws IOException {
         Map<String, Object> variables = new HashMap<>();
         variables.put("sessionId", sessionId);
 
-        String processInstanceKey = camundaClient.createProcessInstance(variables);
+        String processInstanceKey;
+        try {
+            processInstanceKey = camundaClient.createProcessInstance(variables);
+        } catch (Exception e) {
+            log.error("Failed to create Camunda process instance for sessionId={}", sessionId, e);
+            sendError(session, "Failed to start session: " + e.getMessage());
+            return;
+        }
 
         sessionStore.register(sessionId, session, processInstanceKey);
         log.info("Session started: sessionId={}, processInstanceKey={}", sessionId, processInstanceKey);
 
-        Map<String, Object> response = Map.of(
+        sendFrame(session, Map.of(
             "type", "session_ready",
             "processInstanceKey", processInstanceKey
-        );
-        session.sendMessage(new TextMessage(objectMapper.writeValueAsString(response)));
+        ));
     }
 
-    private void handleUserMessage(WebSocketSession session, String sessionId, Map<String, Object> frame) throws Exception {
+    private void handleUserMessage(WebSocketSession session, String sessionId, Map<String, Object> frame) throws IOException {
         SessionStore.SessionEntry entry = sessionStore.getBySessionId(sessionId);
         if (entry == null) {
             log.warn("user_message with no active session: sessionId={}", sessionId);
@@ -78,32 +98,44 @@ public class SessionWebSocketHandler extends TextWebSocketHandler {
         String content = (String) frame.get("content");
         Map<String, Object> variables = Map.of("userMessage", content != null ? content : "");
 
-        camundaClient.publishMessage("user_input_received", entry.processInstanceKey, variables);
-        log.info("Published user_input_received: processInstanceKey={}", entry.processInstanceKey);
+        try {
+            // Correlate by sessionId — the process variable set at creation time
+            camundaClient.publishMessage("user_input_received", entry.getSessionId(), variables);
+            log.info("Published user_input_received: processInstanceKey={}", entry.getProcessInstanceKey());
+        } catch (Exception e) {
+            log.error("Failed to publish message for processInstanceKey={}", entry.getProcessInstanceKey(), e);
+            sendError(session, "Failed to deliver message: " + e.getMessage());
+        }
     }
 
-    private void handleResumeSession(WebSocketSession session, String sessionId, Map<String, Object> frame) throws Exception {
+    private void handleResumeSession(WebSocketSession session, String sessionId, Map<String, Object> frame) throws IOException {
         String processInstanceKey = (String) frame.get("processInstanceKey");
         if (processInstanceKey == null) {
             sendError(session, "processInstanceKey is required to resume a session.");
             return;
         }
 
-        sessionStore.reAssociateWebSocket(processInstanceKey, session);
-        session.getAttributes().put("sessionId", sessionId);
-        log.info("Session resumed: processInstanceKey={}", processInstanceKey);
+        // Reuse the OLD session ID so afterConnectionClosed cleans up the right entry
+        String oldSessionId = sessionStore.reAssociateWebSocket(processInstanceKey, session);
+        if (oldSessionId == null) {
+            sendError(session, "Session not found for processInstanceKey: " + processInstanceKey);
+            return;
+        }
 
-        Map<String, Object> response = Map.of(
+        session.getAttributes().put("sessionId", oldSessionId);
+        log.info("Session resumed: oldSessionId={}, processInstanceKey={}", oldSessionId, processInstanceKey);
+
+        sendFrame(session, Map.of(
             "type", "session_resumed",
             "processInstanceKey", processInstanceKey
-        );
-        session.sendMessage(new TextMessage(objectMapper.writeValueAsString(response)));
+        ));
     }
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
         String sessionId = (String) session.getAttributes().get("sessionId");
         if (sessionId != null) {
+            // Mark disconnected but keep the entry — the client may resume_session
             sessionStore.markDisconnected(sessionId);
             log.info("WebSocket disconnected: sessionId={}, status={}", sessionId, status);
         }
@@ -115,8 +147,15 @@ public class SessionWebSocketHandler extends TextWebSocketHandler {
         log.error("WebSocket transport error: sessionId={}", sessionId, exception);
     }
 
-    private void sendError(WebSocketSession session, String message) throws Exception {
-        Map<String, Object> frame = Map.of("type", "error", "content", message);
-        session.sendMessage(new TextMessage(objectMapper.writeValueAsString(frame)));
+    /** Thread-safe frame send; serialises concurrent writes to the same socket. */
+    private void sendFrame(WebSocketSession session, Map<String, Object> payload) throws IOException {
+        String json = objectMapper.writeValueAsString(payload);
+        synchronized (session) {
+            session.sendMessage(new TextMessage(json));
+        }
+    }
+
+    private void sendError(WebSocketSession session, String message) throws IOException {
+        sendFrame(session, Map.of("type", "error", "content", message));
     }
 }

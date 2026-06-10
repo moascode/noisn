@@ -1,0 +1,18 @@
+camunda:
+  client:
+    zeebe:
+      grpc-address: ${ZEEBE_ADDRESS:https://example.zeebe.camunda.io:443}
+    auth:
+      client-id: ${ZEEBE_CLIENT_ID:}
+      client-secret: ${ZEEBE_CLIENT_SECRET:}
+
+broker:
+  internal-url: ${BROKER_INTERNAL_URL:http://localhost:3001}
+  internal-api-key: ${BROKER_INTERNAL_API_KEY:changeme-set-in-prod}
+
+calculator:
+  api-url: ${CALCULATOR_API_URL:http://localhost:8001}
+
+aws:
+  region: ${AWS_REGION:eu-west-1}
+  bedrock-kb-id: ${BEDROCK_KB_ID:}
